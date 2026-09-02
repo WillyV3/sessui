@@ -423,23 +423,51 @@ func (m Model) View() string {
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, appStyle.Render(body))
 }
 
-// countLine is the session tally shown above the column header -- sessui
-// owns it (list's own status bar is hidden, see New) so it sits at the very
-// top instead of between the header and the rows. Mirrors list's format:
-// "N sessions", or "<shown> sessions • <hidden> filtered" while filtering.
+// countLine is the fleet-state summary sessui shows at the very top (list's
+// own status bar is hidden, see New): the session tally plus how many agents
+// need the user, are working, or are down -- the at-a-glance dashboard for a
+// board you open to check on agents. Counts are over all sessions (not the
+// filtered view), and each segment shows only when non-zero.
 func (m Model) countLine() string {
-	total := len(m.list.Items())
+	items := m.list.Items()
+	total := len(items)
+
+	var working, notify, down int
+	for _, it := range items {
+		s := it.(sessionItem).Session
+		switch s.State {
+		case session.StateNotify:
+			notify++
+		case session.StateWorking:
+			working++
+		}
+		if s.AgentExited() {
+			down++
+		}
+	}
+
 	noun := "sessions"
 	if total == 1 {
 		noun = "session"
 	}
-	line := fmt.Sprintf("%d %s", total, noun)
+	count := fmt.Sprintf("%d %s", total, noun)
 	if fs := m.list.FilterState(); fs == list.Filtering || fs == list.FilterApplied {
 		if shown := len(m.list.VisibleItems()); shown != total {
-			line = fmt.Sprintf("%d %s • %d filtered", shown, noun, total-shown)
+			count = fmt.Sprintf("%d of %d %s", shown, total, noun)
 		}
 	}
-	return m.styles.Count.Render(line)
+
+	segs := []string{m.styles.Count.Render(count)}
+	if notify > 0 {
+		segs = append(segs, m.styles.Error.Render(fmt.Sprintf("%d needs you", notify)))
+	}
+	if working > 0 {
+		segs = append(segs, m.styles.Working.Render(fmt.Sprintf("%d working", working)))
+	}
+	if down > 0 {
+		segs = append(segs, m.styles.PeerDown.Render(fmt.Sprintf("%d down", down)))
+	}
+	return strings.Join(segs, m.styles.Muted.Render("  ·  "))
 }
 
 // headerLine is the one line Model always shows above the list: the
