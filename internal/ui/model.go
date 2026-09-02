@@ -423,59 +423,39 @@ func (m Model) View() string {
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, appStyle.Render(body))
 }
 
-// countLine is the fleet-state summary sessui shows at the very top (list's
-// own status bar is hidden, see New): the session tally plus how many agents
-// need the user, are working, or are down -- the at-a-glance dashboard for a
-// board you open to check on agents. Counts are over all sessions (not the
-// filtered view), and each segment shows only when non-zero.
+// countLine is the quiet session tally at the very top (list's own status bar
+// is hidden, see New). Just a count -- per-session status (working, down,
+// needs-you) already reads off the rows, so a stats bar here would be noise on
+// a tool opened to switch, not to monitor. While filtering it doubles as
+// match feedback ("3 of 13"), the one moment the number earns its place.
 func (m Model) countLine() string {
-	items := m.list.Items()
-	total := len(items)
-
-	var working, notify, down int
-	for _, it := range items {
-		s := it.(sessionItem).Session
-		switch s.State {
-		case session.StateNotify:
-			notify++
-		case session.StateWorking:
-			working++
-		}
-		if s.AgentExited() {
-			down++
-		}
-	}
-
+	total := len(m.list.Items())
 	noun := "sessions"
 	if total == 1 {
 		noun = "session"
 	}
-	count := fmt.Sprintf("%d %s", total, noun)
-	if fs := m.list.FilterState(); fs == list.Filtering || fs == list.FilterApplied {
+	if m.filtering() {
 		if shown := len(m.list.VisibleItems()); shown != total {
-			count = fmt.Sprintf("%d of %d %s", shown, total, noun)
+			return m.styles.Count.Render(fmt.Sprintf("%d of %d %s", shown, total, noun))
 		}
 	}
-
-	segs := []string{m.styles.Count.Render(count)}
-	if notify > 0 {
-		segs = append(segs, m.styles.Error.Render(fmt.Sprintf("%d needs you", notify)))
-	}
-	if working > 0 {
-		segs = append(segs, m.styles.Working.Render(fmt.Sprintf("%d working", working)))
-	}
-	if down > 0 {
-		segs = append(segs, m.styles.PeerDown.Render(fmt.Sprintf("%d down", down)))
-	}
-	return strings.Join(segs, m.styles.Muted.Render("  ·  "))
+	return m.styles.Count.Render(fmt.Sprintf("%d %s", total, noun))
 }
 
-// headerLine is the one line Model always shows above the list: the
-// column-label header (renderHeader) normally, or -- since list's own
-// title/filter bar is hidden (see New) -- the filter textinput itself
-// while the user is typing a filter, so they still see what they typed.
+// filtering reports whether the user is actively filtering with text typed.
+// bubbles/list stays in Filtering state even after the text is backspaced to
+// empty, so an empty filter counts as NOT filtering -- which is what brings
+// the column headers back (see headerLine).
+func (m Model) filtering() bool {
+	return m.list.FilterState() == list.Filtering && m.list.FilterInput.Value() != ""
+}
+
+// headerLine is the one line Model always shows above the list: the filter
+// textinput while the user is actively typing a filter (list's own filter bar
+// is hidden, see New), otherwise the column-label header -- so backspacing the
+// filter empty restores the labels.
 func (m Model) headerLine() string {
-	if m.list.FilterState() == list.Filtering {
+	if m.filtering() {
 		return m.list.FilterInput.View()
 	}
 	return renderHeader(m.styles)
