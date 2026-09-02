@@ -75,4 +75,12 @@ the nav.
 The peer column lights up when [claude-peers] is on the network; without it,
 that column is simply empty and everything else works the same.
 
+## Development
+
+`CLAUDE.md` (repo root) is the agent/dev context — constraints, build/verify
+workflow, code map. `docs/ARCHITECTURE.md` explains the two layers;
+`docs/GOTCHAS.md` collects the traps (GOBIN shadow, tmux 3.8, theme colours,
+the fixed-width layout) — read it before touching layout, colour, filtering, or
+the tmux bind.
+
 [claude-peers]: https://github.com/WillyV3/claude-peers
