@@ -72,3 +72,49 @@ byte-identical widths to before (`TestLayoutColumns_ShippedWidthsUnchanged`).
 The scroll frame counter must snap to 0 when the selection moves, or arrowing
 onto a long row drops you mid-scroll. It's keyed by session **name**, not list
 index, because the 2s background reload re-sorts and shifts indexes.
+
+### 12. macOS config path — not `os.UserConfigDir`
+On Darwin, `os.UserConfigDir()` returns `~/Library/Application Support` and
+ignores `XDG_CONFIG_HOME` entirely — wrong for a dotfile-managed CLI (chezmoi
+manages `~/.config` on the Mac exactly as on Linux). Broke the config tests
+on macOS CI the first time they ran there. `configPath` (`config.go`) builds
+the path by hand instead: `$XDG_CONFIG_HOME` or `$HOME/.config`, then
+`sessui/config.json`, on every OS. Don't reach for `os.UserConfigDir` here.
+
+### 13. A new Nerd glyph needs an ASCII stand-in before it compiles
+Every codepoint that reaches `glyphU` (icons, header/column labels, the
+header-pill bell) must have an entry in `asciiGlyphs` (`glyphs.go`), or a Mac
+running `"icons": "ascii"` sees `asciiUnknown` ("*") where the icon should
+be. `TestASCIIGlyphs_CoverEveryCodepoint` reads the package source for every
+`0x…` literal and fails the build on a missing entry — so this is caught,
+not silent, but budget the extra line in the same commit as the glyph. The
+literal `"✉"` (`renderPeer`, `header.go`) is the one exception: a plain
+Unicode character, not a Nerd Font PUA codepoint via `glyphU`, so it needs no
+stand-in and this test doesn't cover it.
+
+### 14. Don't undo the once-per-process Omarchy probe
+`loadPalette` used to shell out to `omarchy-theme-color` once per colour slot
+(11 calls) with no upfront check — on a box without it, that's 11 failed
+execs at every launch of a tool opened ~120 times/hour, with the failure
+hidden behind a fallback the user could neither see nor choose.
+`omarchyThemeAvailable` (`style.go`) now calls `exec.LookPath` ONCE to decide
+whether Omarchy is present at all: a pinned `dark`/`light` palette never
+queries anything, and `auto` on a box without Omarchy short-circuits to the
+built-in dark palette with zero real execs. `auto` on a real Omarchy box
+still queries all 11 slots — that part is unavoidable and correct, the fix
+was only for the "not present" case. Don't reintroduce a per-slot query with
+no availability check in front of it.
+
+### 15. A config-load error is overwritten by the very next successful reload
+`LoadConfig`'s parse error IS threaded into `Model.err` at startup, and
+`footerLine` does render `"error: ..."` for it — but `Update`'s `reloadMsg`
+case unconditionally sets `m.err = nil` on any successful `session.List()`
+(`model.go`, the `case reloadMsg` block), and that reload fires as part of
+`Init()` within the first tick. Verified live: a config with invalid JSON
+still opens straight to the normal help line, not the error, by ~1s in.
+In practice a corrupt `config.json` degrades to defaults correctly, but the
+footer notice explaining why is on screen for at most one frame and is not a
+reliable way for a user to actually see it. Known, not fixed here — a
+config-load error needs to survive a session-reload success (a separate
+field, or `reloadMsg` preserving a pre-existing non-reload error) before the
+footer claim in `config.go`'s doc comment is true in practice.

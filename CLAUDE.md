@@ -54,9 +54,15 @@ sessui --dump                    # headless one-shot row render (no interaction)
 
 - **tmux 3.8+** — the live-updating popup relies on the popup-redraw fix in
   3.8; older tmux paints once and won't animate the spinner/marquee.
-- **A Nerd Font** (JetBrainsMono NF is the omarchy default) for the icons.
-  Verify any new glyph is actually in the font before shipping it (`otfinfo -u`).
-- `omarchy-theme-color` for theme colors (falls back to defaults off Omarchy).
+- **A Nerd Font** (JetBrainsMono NF is the omarchy default) for the icons —
+  or `Config.Icons = "ascii"` (`~/.config/sessui/config.json`) for a terminal
+  without one, the usual Mac case. Verify any new glyph is actually in the
+  font before shipping it (`otfinfo -u`), AND give it an ASCII stand-in in
+  `glyphs.go` — a completeness test fails the build if you don't.
+- `omarchy-theme-color`, optional: `Config.Theme.Palette` is `"auto"` (follow
+  it when present, else the built-in dark palette; presence is checked ONCE
+  via `exec.LookPath`, not per colour), or a pinned `"dark"`/`"light"`
+  built-in that never shells out at all.
 - `cp3` (claude-peers) is optional. When it is not installed the peer column is
   hidden outright — `.claude-peers-agent` markers are NOT read as down peers,
   since a roster we never received is no evidence of liveness (`peerFleet`).
@@ -66,8 +72,11 @@ sessui --dump                    # headless one-shot row render (no interaction)
 - `internal/session/` — pure data layer (tmux + cp3 parse), no UI import, fully
   table-tested. `agent.go` = agent-state detection; `session.go` = the model.
 - `internal/ui/` — the bubbletea layer. `model.go` = the `tea.Model`;
-  `delegate.go` = row/header rendering + marquee + widths; `style.go` = theme
-  palette + styles; `icons.go` = the app→glyph table.
+  `delegate.go` = row rendering + marquee; `columns.go` = the column catalog
+  and layout engine; `style.go` = theme palette + styles; `icons.go` = the
+  app→glyph table; `glyphs.go` = the nerd/ascii glyph-set switch; `config.go`
+  = `~/.config/sessui/config.json` persistence; `header.go` = the count-line
+  attention pills.
 - `sessui.tmux` = TPM plugin entry (build-on-install + keybind). `main.go` =
   entry + `--dump`.
 
