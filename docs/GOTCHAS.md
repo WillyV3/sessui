@@ -57,11 +57,16 @@ prepends the bg SGR and re-inserts it after every `\x1b[0m`. Verify by counting
 `48;2;` occurrences across the selected row in a `-pe` capture (should be many,
 not 1).
 
-### 10. Fixed-width layout assumes ~112 columns
-The table is a fixed 108-usable-column layout. `@sessui-width` as a percentage
-on a narrow terminal will clip it. Making the columns responsive to the actual
-popup width (the tea `WindowSizeMsg` is already received) is a real, unbuilt
-follow-up — not something the current code does.
+### 10. The layout follows the popup width — but only one column flexes
+Columns are data (`columns.go`): a `tableLayout` is computed from the real
+width on every `WindowSizeMsg` and reload via `Model.relayout`, the single
+writer of `delegate.layout`. Fixed columns keep their width; exactly one flex
+column (status) absorbs the remainder, floored at its `minWidth`. So a wider
+popup gives status more room; a popup too narrow for the fixed columns does
+NOT reflow — it clips. `--dump` and the tests lay out at `defaultUsableWidth`
+(108, the shipped geometry) so a user who never opens the column editor sees
+byte-identical widths to before (`TestLayoutColumns_ShippedWidthsUnchanged`).
+`ponytail:` a second flex column would need weight-based distribution.
 
 ### 11. Marquee frame resets on selection, keyed by name
 The scroll frame counter must snap to 0 when the selection moves, or arrowing

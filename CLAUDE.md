@@ -18,10 +18,12 @@ This file + `docs/` exist so it can pick up cold.
    wrong.
 2. **Ponytail.** Laziest construction that fully does the job. Delete over add.
    A `ponytail:` comment marks a deliberate simplification + its ceiling.
-3. **Fixed-width table, ~112 columns.** Every cell is a fixed-width lipgloss
-   cell joined with `JoinHorizontal` (see `usableWidth` in `delegate.go`). The
-   layout assumes the popup is ~112 wide. A responsive/dynamic-width layout is
-   an unbuilt follow-up, not the current design — don't assume it adapts.
+3. **Columns are data; the layout follows the popup width.** Every cell is a
+   fixed-width lipgloss cell joined with `JoinHorizontal`, but which columns,
+   in what order, at what width is a `tableLayout` computed from the real
+   width (`columns.go`, `Model.relayout`). One column flexes (status). Never
+   reintroduce a width constant into a renderer — add a `column` to the
+   catalog instead. `defaultUsableWidth` (108) is only for `--dump` and tests.
 
 ## Dev workflow
 

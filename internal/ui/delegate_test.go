@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/willyv3/sessui/internal/session"
@@ -121,7 +120,7 @@ func TestRenderPeer(t *testing.T) {
 }
 
 func TestRenderHeader_HasColumnLabels(t *testing.T) {
-	header := renderHeader(testStyles(), true)
+	header := renderHeader(testStyles(), testLayout(true))
 	for _, label := range []string{"apps", "session", "cwd", "peer", "status"} {
 		if !strings.Contains(header, label) {
 			t.Errorf("renderHeader() = %q, want to contain %q", header, label)
@@ -140,35 +139,37 @@ func TestRenderHeader_HasColumnLabels(t *testing.T) {
 // The showPeer=true half is the true-positive control: it confirms the peer
 // name WOULD show, so the false assertion is really testing the hide.
 func TestPeerColumnHidden(t *testing.T) {
-	if got, want := statusWidth(false), statusWidth(true)+peerColWidth+1; got != want {
-		t.Errorf("statusWidth(false) = %d, want %d (status must reclaim peer col + separator)", got, want)
+	with, without := testLayout(true), testLayout(false)
+	statusOf := func(l tableLayout) int { return l.widths[len(l.widths)-1] }
+	peerWidth := columnCatalog[colPeer].width
+	if got, want := statusOf(without), statusOf(with)+peerWidth+columnGap; got != want {
+		t.Errorf("status width without peer = %d, want %d (status must reclaim peer col + separator)", got, want)
 	}
 
 	styles := testStyles()
-	header := renderHeader(styles, false)
+	header := renderHeader(styles, without)
 	if strings.Contains(header, glyphU(glyphPeer)) || strings.Contains(header, "peer") {
 		t.Errorf("hidden-peer header must not carry the peer label/glyph: %q", header)
 	}
 	if !strings.Contains(header, "status") {
 		t.Errorf("hidden-peer header still needs the status label: %q", header)
 	}
-	if w := lipgloss.Width(header); w > usableWidth {
-		t.Errorf("hidden-peer header width = %d, want <= %d", w, usableWidth)
+	if w := lipgloss.Width(header); w > defaultUsableWidth {
+		t.Errorf("hidden-peer header width = %d, want <= %d", w, defaultUsableWidth)
 	}
 
-	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 	now := time.Now()
-	s := session.Session{Name: "sontara", Activity: now, Machine: "omarchy", PeerName: "astrobot"}
+	c := cellFor(now, session.Session{Name: "sontara", Activity: now, Machine: "omarchy", PeerName: "astrobot"})
 
-	if row := renderRow(styles, "/home/willy", now, s, sp, 0, false, true); !strings.Contains(row, "astrobot") {
+	if row := renderRow(with, c, 0, false); !strings.Contains(row, "astrobot") {
 		t.Fatalf("control: peer-shown row should render the peer name, got %q", row)
 	}
-	row := renderRow(styles, "/home/willy", now, s, sp, 0, false, false)
+	row := renderRow(without, c, 0, false)
 	if strings.Contains(row, "astrobot") {
 		t.Errorf("hidden-peer row must not render the peer name: %q", row)
 	}
-	if w := lipgloss.Width(row); w > usableWidth {
-		t.Errorf("hidden-peer row width = %d, want <= %d", w, usableWidth)
+	if w := lipgloss.Width(row); w > defaultUsableWidth {
+		t.Errorf("hidden-peer row width = %d, want <= %d", w, defaultUsableWidth)
 	}
 }
 
@@ -219,18 +220,17 @@ func TestMarqueeOffset(t *testing.T) {
 // for its column is permanently cut off on an unselected row, but the selected
 // row scrolls far enough -- somewhere in its cycle -- to show the hidden tail.
 func TestMarqueeCell_RevealsTail(t *testing.T) {
-	styles := testStyles()
-	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot))
+	l := testLayout(true)
 	now := time.Now()
-	long := session.Session{Name: "this-is-a-very-long-session-name-indeed", Activity: now}
+	c := cellFor(now, session.Session{Name: "this-is-a-very-long-session-name-indeed", Activity: now})
 
-	if row := renderRow(styles, "/home/willy", now, long, sp, 0, false, true); strings.Contains(row, "indeed") {
+	if row := renderRow(l, c, 0, false); strings.Contains(row, "indeed") {
 		t.Fatalf("unselected row must truncate the tail, but it showed: %q", row)
 	}
 
 	revealed := false
 	for f := 0; f < 200 && !revealed; f++ {
-		revealed = strings.Contains(renderRow(styles, "/home/willy", now, long, sp, f, true, true), "indeed")
+		revealed = strings.Contains(renderRow(l, c, f, true), "indeed")
 	}
 	if !revealed {
 		t.Fatal("selected row never scrolled far enough to reveal the hidden tail")
@@ -243,12 +243,11 @@ func TestMarqueeCell_RevealsTail(t *testing.T) {
 // (peer-mcp-maintainer). Without Inline, lipgloss word-wraps content past
 // its Width instead of the MaxWidth truncating it, breaking row alignment.
 func TestRenderRow_NoWrapAtPopupWidth(t *testing.T) {
-	styles := testStyles()
-	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot))
+	l := testLayout(true)
 	now := time.Now()
 
 	const longSummary = "doorboard: blocked on caretaker for NAND dump. Doing no-device prep: lpunpack (present at /usr/bin), RK3326 mainline DTs (odroid-go/rg351), homelab renderer + Sonia phone-app sketch."
-	s := session.Session{
+	c := cellFor(now, session.Session{
 		Name:        "peer-mcp-maintainer",
 		Created:     now.Add(-23 * time.Hour),
 		Activity:    now,
@@ -258,21 +257,21 @@ func TestRenderRow_NoWrapAtPopupWidth(t *testing.T) {
 		Machine:     "omarchy",
 		PeerName:    "peer-mcp-maintainer",
 		PeerSummary: longSummary,
-	}
+	})
 
-	row := renderRow(styles, "/home/willy", now, s, sp, 0, false, true)
+	row := renderRow(l, c, 0, false)
 	if h := lipgloss.Height(row); h != 1 {
 		t.Fatalf("renderRow() height = %d, want 1 (long content must truncate, not wrap the row)", h)
 	}
-	if w := lipgloss.Width(row); w > usableWidth {
-		t.Errorf("renderRow() width = %d, want <= %d (usable width inside the popup)", w, usableWidth)
+	if w := lipgloss.Width(row); w > defaultUsableWidth {
+		t.Errorf("renderRow() width = %d, want <= %d (usable width inside the popup)", w, defaultUsableWidth)
 	}
 
-	header := renderHeader(styles, true)
+	header := renderHeader(c.styles, l)
 	if hh := lipgloss.Height(header); hh != 1 {
 		t.Errorf("renderHeader() height = %d, want 1", hh)
 	}
-	if hw := lipgloss.Width(header); hw > usableWidth {
-		t.Errorf("renderHeader() width = %d, want <= %d", hw, usableWidth)
+	if hw := lipgloss.Width(header); hw > defaultUsableWidth {
+		t.Errorf("renderHeader() width = %d, want <= %d", hw, defaultUsableWidth)
 	}
 }

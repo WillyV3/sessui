@@ -28,7 +28,12 @@ opt() {
 	[ -n "$v" ] && echo "$v" || echo "$2"
 }
 key="$(opt @sessui-key s)"
-width="$(opt @sessui-width 112)"
 height="$(opt @sessui-height 26)"
 
-tmux bind-key "$key" display-popup -E -w "$width" -h "$height" "$BIN"
+# Width is read at OPEN time, not bind time, so a change made from sessui's
+# own settings (which writes @sessui-width) takes effect on the very next
+# prefix+key without re-sourcing tmux.conf. display-popup -w rejects a
+# format string, hence the run-shell substitution rather than '#{@sessui-width}'.
+# Height stays bound once: the table is one row per session and there is no
+# setting for it, by design.
+tmux bind-key "$key" run-shell "tmux display-popup -E -w \"\$(tmux show-option -gqv @sessui-width)\" -h $height '$BIN' 2>/dev/null || tmux display-popup -E -w 112 -h $height '$BIN'"

@@ -39,9 +39,10 @@ type rowDelegate struct {
 	styles  Styles
 	home    string
 	spinner spinner.Model
-	// showPeer hides the peer column outright when false (no cp3 peers in
-	// use). Set from the session list on each reload -- see applyReload.
-	showPeer bool
+	// layout is the resolved column shape for the current width and
+	// configuration. Recomputed on resize and on reload (the peer column
+	// drops out when no cp3 peers are in use) -- see Model.relayout.
+	layout tableLayout
 	// marqueeFrame is a monotonic counter (advanced by the marquee tick,
 	// kept in sync with Model's) that drives the selected row's scroll so
 	// its long cells reveal fully instead of truncating -- see marqueeCell.
@@ -57,53 +58,31 @@ func (d *rowDelegate) Render(w io.Writer, m list.Model, index int, item list.Ite
 	if !ok {
 		return
 	}
-	fmt.Fprint(w, renderRow(d.styles, d.home, time.Now(), it.Session, d.spinner, d.marqueeFrame, index == m.Index(), d.showPeer))
+	c := cell{styles: d.styles, home: d.home, now: time.Now(), session: it.Session, spinner: d.spinner}
+	fmt.Fprint(w, renderRow(d.layout, c, d.marqueeFrame, index == m.Index()))
 }
 
-// Column widths. lipgloss's ANSI-aware Width() padding gives the row a
-// table's alignment without a separate table widget; fixedCol additionally
-// sets Inline (skip wrapping) and MaxWidth (truncate) so a cell's content
-// running long -- a 200-character cp3 summary, a 19-character session name
-// -- clips to one line instead of wrapping the whole row. maxIcons caps how
-// many app icons a row shows; iconSlotWidth reserves 2 cells per icon
-// slot -- Nerd Font glyphs measure as width 1 under lipgloss.Width() but
-// often render double-width in the terminal, so reserving 2 (rather than
-// the 1 lipgloss thinks it needs) keeps the column's counted width
-// deterministic regardless of which slots are actually double-wide.
-//
-// Widths split usableWidth across the fixed cells plus five 1-wide
-// separators. Column order is cursor, session, apps, active, cwd, peer,
-// status -- session (the name) leads, status (the native summary, the star)
-// sits last and takes whatever the others leave so its marquee scrolls along
-// the right edge. Every cell is fixed width, so rows form a balanced
-// rectangle rather than a left-aligned sawtooth.
+// Every cell is a fixed-width lipgloss cell (fixedCol: Inline so it never
+// wraps, MaxWidth so it never overruns) joined with JoinHorizontal, so rows
+// form a balanced rectangle rather than a left-aligned sawtooth, and a
+// 200-character summary clips to one line instead of wrapping the row. Which
+// columns, in what order, at what width, is the tableLayout -- see
+// columns.go; the delegate only draws what it is handed.
 const (
-	// usableWidth is the row width inside the popup: the tmux popup is
-	// 112 wide (see tmux.conf) minus appStyle's Padding(1,2) = 4.
-	usableWidth    = 108
-	cursorColWidth = 2
-	maxIcons       = 3
-	iconSlotWidth  = 2
-	iconColWidth   = maxIcons * iconSlotWidth
-	nameColWidth   = 22
-	activeColWidth = 5 // last-active elapsed: "now", "3m", "2h", "234d"
-	cwdColWidth    = 20
-	peerColWidth   = 14 // ●/○ liveness dot + the peer name when it differs + ✉
+	// defaultUsableWidth is the row width inside the popup at the shipped
+	// geometry: the tmux popup is 112 wide (see sessui.tmux) minus
+	// appStyle's Padding(1,2) = 4. The live list uses the real width from
+	// WindowSizeMsg; this is what --dump and the tests lay out against.
+	defaultUsableWidth = 108
+	// maxIcons caps how many app icons a row shows; iconSlotWidth reserves
+	// 2 cells per slot -- Nerd Font glyphs measure as width 1 under
+	// lipgloss.Width() but often render double-width in the terminal, so
+	// reserving 2 keeps the column's counted width deterministic regardless
+	// of which slots are actually double-wide.
+	maxIcons      = 3
+	iconSlotWidth = 2
+	iconColWidth  = maxIcons * iconSlotWidth
 )
-
-// statusWidth is the width left for the status (summary) column. When no cp3
-// peers are in use the peer column is hidden outright (not just blanked), so
-// status reclaims that column's width plus its separator -- the native
-// pane-title summaries get the extra room. It's a function, not a const,
-// precisely so it grows when the peer column drops out.
-func statusWidth(showPeer bool) int {
-	// base: cursor, name, icons, active, cwd, status + 4 separators between them
-	w := usableWidth - cursorColWidth - iconColWidth - nameColWidth - activeColWidth - cwdColWidth - 4
-	if showPeer {
-		w -= peerColWidth + 1 // the peer cell plus its separator
-	}
-	return w
-}
 
 // anyPeer reports whether any session joined a live-or-known cp3 peer -- i.e.
 // claude-peers is in use on this box. When false the peer column disappears
@@ -125,38 +104,29 @@ func fixedCol(w int) lipgloss.Style {
 	return lipgloss.NewStyle().Inline(true).Width(w).MaxWidth(w)
 }
 
-// renderRow renders one session as: cursor, session name, app icons,
-// last-active, cwd, peer, and status (see the column-order note above).
-// Shared by the interactive delegate, --dump, and renderHeader (same column
-// widths, so labels line up with the data). Every column is a fixed-width
-// lipgloss cell joined with JoinHorizontal, so columns start at the same
-// offset on every row regardless of how long the name, summary, or cwd is;
-// the selected row's over-long cells scroll (marqueeCell) and it gets a
-// full-width highlight (selectRow).
-func renderRow(styles Styles, home string, now time.Time, s session.Session, sp spinner.Model, frame int, selected, showPeer bool) string {
+// renderRow draws one session as the layout's columns, in order, at their
+// resolved widths. Shared by the interactive delegate, --dump, and
+// renderHeader (same layout, so labels sit over their data). Columns start at
+// the same offset on every row regardless of content length; the selected
+// row's over-long cells scroll (marqueeCell) and it gets a full-width
+// highlight (selectRow).
+func renderRow(l tableLayout, c cell, frame int, selected bool) string {
 	cursor := "  "
 	if selected {
-		cursor = styles.Cursor.Render("> ")
+		cursor = c.styles.Cursor.Render("> ")
 	}
 
-	cells := []string{
-		fixedCol(cursorColWidth).Render(cursor),
-		marqueeCell(nameColWidth, frame, selected, renderName(styles, s)),
-		" ",
-		renderIcons(s, sp),
-		" ",
-		fixedCol(activeColWidth).Render(styles.activeHeat(now.Sub(s.Activity)).Render(session.LastActive(s.Activity, now))),
-		" ",
-		marqueeCell(cwdColWidth, frame, selected, renderCWD(styles, session.AbbreviatePath(s.CWD, home))),
-		" ",
+	cells := make([]string, 0, 2*len(l.columns))
+	cells = append(cells, fixedCol(cursorWidth).Render(cursor))
+	for i, col := range l.columns {
+		if i > 0 {
+			cells = append(cells, " ")
+		}
+		cells = append(cells, marqueeCell(l.widths[i], frame, selected, col.render(c)))
 	}
-	if showPeer {
-		cells = append(cells, marqueeCell(peerColWidth, frame, selected, renderPeer(styles, s)), " ")
-	}
-	cells = append(cells, marqueeCell(statusWidth(showPeer), frame, selected, renderStatus(styles, now, s)))
 	row := lipgloss.JoinHorizontal(lipgloss.Top, cells...)
 	if selected {
-		row = styles.selectRow(row)
+		row = c.styles.selectRow(row)
 	}
 	return row
 }
@@ -209,28 +179,18 @@ const (
 )
 
 // renderHeader renders the column-label band above the list (when not
-// filtering): "apps" over the icon column, a pulse glyph over last-active,
-// then icon+label for session, cwd, peer and status. In the accent colour (see
-// styles.Header) so it reads as a header, not another data row. Mirrors
-// renderRow's cell order and widths exactly so labels sit over their data.
-// There's no "peer" label -- the peer is folded into the session cell.
-func renderHeader(styles Styles, showPeer bool) string {
-	h := styles.Header
-	cells := []string{
-		fixedCol(cursorColWidth).Render(""),
-		fixedCol(nameColWidth).Render(h.Render(glyphU(glyphSession) + " session")),
-		" ",
-		fixedCol(iconColWidth).Render(h.Render("apps")),
-		" ",
-		fixedCol(activeColWidth).Render(h.Render(glyphU(glyphActive))),
-		" ",
-		fixedCol(cwdColWidth).Render(h.Render(glyphU(glyphCWD) + " cwd")),
-		" ",
+// filtering): each column's glyph and label, in the accent colour (see
+// styles.Header) so it reads as a header, not another data row. It walks the
+// same layout as renderRow, so labels sit over their data by construction.
+func renderHeader(styles Styles, l tableLayout) string {
+	cells := make([]string, 0, 2*len(l.columns))
+	cells = append(cells, fixedCol(cursorWidth).Render(""))
+	for i, col := range l.columns {
+		if i > 0 {
+			cells = append(cells, " ")
+		}
+		cells = append(cells, fixedCol(l.widths[i]).Render(col.headerCell(styles)))
 	}
-	if showPeer {
-		cells = append(cells, fixedCol(peerColWidth).Render(h.Render(glyphU(glyphPeer)+" peer")), " ")
-	}
-	cells = append(cells, fixedCol(statusWidth(showPeer)).Render(h.Render(glyphU(glyphStatus)+" status")))
 	return lipgloss.JoinHorizontal(lipgloss.Top, cells...)
 }
 
@@ -352,11 +312,13 @@ func renderCWD(styles Styles, abbrev string) string {
 func DumpRows(sessions []session.Session) string {
 	m := New()
 	sortSessions(sessions)
-	showPeer := anyPeer(sessions)
+	layout := layoutColumns(resolveColumns(m.columns, anyPeer(sessions)), defaultUsableWidth)
 	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot))
+	now := time.Now()
 	var b strings.Builder
 	for _, s := range sessions {
-		b.WriteString(renderRow(m.styles, m.home, time.Now(), s, sp, 0, false, showPeer))
+		c := cell{styles: m.styles, home: m.home, now: now, session: s, spinner: sp}
+		b.WriteString(renderRow(layout, c, 0, false))
 		b.WriteString("\n")
 	}
 	return b.String()

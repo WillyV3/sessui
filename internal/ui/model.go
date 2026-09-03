@@ -63,6 +63,11 @@ type Model struct {
 	home          string
 	width, height int
 	styles        Styles
+	// columns is the user's table configuration; showPeer is the runtime
+	// fact (any cp3 peer in use) that can hide the peer column regardless of
+	// it. Both feed relayout, which is the only writer of delegate.layout.
+	columns  []columnSetting
+	showPeer bool
 	// marqueeFrame advances the selected row's scroll; marqueeFor is the
 	// session name it's counting for, so the frame resets to 0 (back to the
 	// row's start) the instant the selection moves -- keyed by name, not
@@ -111,7 +116,28 @@ func New() Model {
 	ti.CharLimit = 128
 	ti.Width = 40
 
-	return Model{list: l, spinner: sp, delegate: delegate, renameInput: ti, home: home, styles: styles}
+	m := Model{list: l, spinner: sp, delegate: delegate, renameInput: ti, home: home, styles: styles, columns: defaultColumnSettings()}
+	m.relayout()
+	return m
+}
+
+// usableWidth is the row width the list has to work with: the window minus
+// appStyle's frame, or the shipped default before the first WindowSizeMsg
+// arrives (and for --dump, which never gets one).
+func (m Model) usableWidth() int {
+	if m.width == 0 {
+		return defaultUsableWidth
+	}
+	w, _ := m.listSize(0)
+	return w
+}
+
+// relayout recomputes the delegate's column layout from configuration,
+// runtime peer visibility and the current width. It is the single writer of
+// delegate.layout so a resize, a reload and a settings change all go through
+// one path.
+func (m *Model) relayout() {
+	m.delegate.layout = layoutColumns(resolveColumns(m.columns, m.showPeer), m.usableWidth())
 }
 
 func (m Model) Init() tea.Cmd {
@@ -174,6 +200,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.list.SetSize(m.listSize(0))
+		m.relayout()
 		return m, nil
 
 	case tea.KeyMsg:
@@ -233,7 +260,8 @@ func (m *Model) applyReload(sessions []session.Session) tea.Cmd {
 	}
 
 	sortSessions(sessions)
-	m.delegate.showPeer = anyPeer(sessions)
+	m.showPeer = anyPeer(sessions)
+	m.relayout()
 
 	cmd := m.list.SetItems(toItems(sessions))
 
@@ -459,7 +487,7 @@ func (m Model) headerLine() string {
 	if m.filtering() {
 		return m.list.FilterInput.View()
 	}
-	return renderHeader(m.styles, m.delegate.showPeer)
+	return renderHeader(m.styles, m.delegate.layout)
 }
 
 // footerLine is the one line sessui always shows below the list: the rename

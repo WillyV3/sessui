@@ -64,11 +64,23 @@ signal, not truth (see GOTCHAS).
 renders each row. `Model` adds three things list doesn't: the live tick, the
 background reload, and the tmux actions (switch/rename/kill).
 
-### Rows & columns (`delegate.go`)
-Fixed-width cells joined with `JoinHorizontal`. `usableWidth` (108 inside the
-112 popup) is split across the columns + separators; `status` (the summary, the
-"star") takes what's left. `fixedCol` = `Inline + Width + MaxWidth` so long
-content truncates on one line instead of wrapping the row. `renderStatus`
+### Rows & columns (`columns.go`, `delegate.go`)
+Columns are data. `columnCatalog` is every column sessui can draw, keyed by a
+stable `columnID` (the string that persists to disk); each `column` carries
+its label, header glyph, fixed `width` (0 = the single flex column), a
+`minWidth` floor, and a pure `render(cell) string`. The user's configuration
+is `[]columnSetting` (id + optional width override, slice order = display
+order); `resolveColumns` turns it into renderable columns, dropping unknown
+ids so a newer build's config never bricks an older one, and hiding the peer
+column at runtime when no cp3 peers are in use. `layoutColumns(cols, width)`
+produces the `tableLayout` — resolved widths for one render — and
+`Model.relayout` is its only writer, called on resize, reload and (later)
+settings changes. The delegate just walks the layout: fixed-width cells
+joined with `JoinHorizontal`, status absorbing what the others leave.
+`fixedCol` = `Inline + Width + MaxWidth` so long content truncates on one
+line instead of wrapping the row. Four columns exist in the catalog that the
+default layout does not show — age, windows, attached, machine — all from
+data `session.List` already fetches. `renderStatus`
 priority: **needs you** (notify) → **EffectiveSummary** → **verb + elapsed**
 (working) → **idle** (agent parked > `idleThreshold` = 15m) → blank.
 
