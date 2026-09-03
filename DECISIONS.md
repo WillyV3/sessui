@@ -16,3 +16,5 @@ commit. Reversing one means a new entry, not an edit.
 - **A config-parse error is its own field**, not `m.err`, which every reload clears. `bf7cadb`.
 - **CI on Linux and macOS, release archives on a `v*` tag.** macOS caught the Darwin config-path bug on its first run. `869cb07`.
 - **Team process:** one contract pinned before spawning; every agent in its own worktree; two builders at once max. Five agents in the shared tree cost a contract mismatch and a branch collision.
+- **The editor renders at the window it is in.** Popup width is only a number on its row; laying the page out at the setting clipped everything once the setting differed from the window. Legends use `^r`/`^x` notation so they fit at 108 with no truncation. `7d6d714`.
+- **The popup-width control is captioned "popup" and says "tmux popup width · takes effect next open".** "width" beside a column editor read as a column. `7d6d714`.
