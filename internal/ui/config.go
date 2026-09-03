@@ -36,12 +36,20 @@ func (c Config) withDefaults() Config {
 	return c
 }
 
-// configPath honours XDG so the file lands where chezmoi and every other
-// dotfile tool expects: ~/.config/sessui/config.json.
+// configPath is $XDG_CONFIG_HOME/sessui/config.json, defaulting to
+// ~/.config/sessui/config.json -- on EVERY OS. Not os.UserConfigDir: on
+// Darwin that returns ~/Library/Application Support and ignores
+// XDG_CONFIG_HOME entirely, which is the wrong place for a dotfile-managed
+// CLI tool (chezmoi manages ~/.config on the Mac exactly as on Linux) and
+// broke the config tests on macOS CI the first time they ran there.
 func configPath() (string, error) {
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		return "", fmt.Errorf("config dir: %w", err)
+	dir := os.Getenv("XDG_CONFIG_HOME")
+	if dir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("home dir: %w", err)
+		}
+		dir = filepath.Join(home, ".config")
 	}
 	return filepath.Join(dir, "sessui", "config.json"), nil
 }

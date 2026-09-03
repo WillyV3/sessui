@@ -16,6 +16,29 @@ func useTempConfigDir(t *testing.T) string {
 	return dir
 }
 
+// TestConfigPath_IsDotConfigOnEveryOS pins the Mac fix: with XDG unset the
+// file lives under $HOME/.config regardless of GOOS -- never under
+// ~/Library/Application Support, where os.UserConfigDir would put it on
+// Darwin and where no dotfile tooling would ever look.
+func TestConfigPath_IsDotConfigOnEveryOS(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+
+	got, err := configPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(home, ".config", "sessui", "config.json"); got != want {
+		t.Errorf("configPath() = %q, want %q", got, want)
+	}
+
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
+	if got, _ := configPath(); got != filepath.Join(home, "xdg", "sessui", "config.json") {
+		t.Errorf("configPath() with XDG set = %q, want it honoured", got)
+	}
+}
+
 // TestConfig_FirstRunIsTheShippedTable pins the upgrade contract: no file on
 // disk means the exact default column set, with no error -- a user who has
 // never opened the editor must see the table they always had.
