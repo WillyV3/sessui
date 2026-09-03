@@ -154,7 +154,7 @@ func New() Model {
 	// A corrupt config is surfaced in the footer rather than fatal: the
 	// user still gets a working table (LoadConfig returns defaults on any
 	// failure) and can see why their layout came back as the shipped one.
-	widgets, widgetErr := resolveWidgets(cfg.Header.Widgets)
+	widgets, widgetErr := resolveWidgets(cfg.Header.widgets())
 	if cfgErr == nil {
 		cfgErr = widgetErr // a bad widget entry is a config problem, surfaced the same way
 	}

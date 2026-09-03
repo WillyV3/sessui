@@ -73,7 +73,7 @@ to the defaults below and still opens.
 | `icons`         | `"nerd"` \| `"ascii"`              | `nerd`  | glyph set — `ascii` swaps every Nerd Font icon and header glyph for a plain stand-in, for a terminal without a Nerd Font (the usual Mac case) |
 | `theme.palette` | `"auto"` \| `"dark"` \| `"light"`  | `auto`  | `auto` follows the Omarchy theme when it's on the box, else the built-in dark palette; `dark`/`light` pin a complete built-in (Catppuccin Mocha / Latte) and never query Omarchy |
 | `columns`       | array of `{"id": ..., "width": ...}` | the 6 columns below | which columns show, in what order, and any width override (`width` optional) |
-| `header.widgets` | array of `{"name": ..., "args": {...}}` | `[{"name":"attention"}]` | the header's widget section, in order — see [Header widgets](#header-widgets--ctrlw) |
+| `header.widgets` | array of `{"name": ..., "args": {...}}` | `now-playing`, `attention` | the header's widget section, in order — see [Header widgets](#header-widgets--ctrlw) |
 
 ```json
 {

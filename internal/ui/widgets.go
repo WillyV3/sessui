@@ -92,10 +92,24 @@ type HeaderConfig struct {
 	Widgets []widgetSetting `json:"widgets,omitempty"`
 }
 
-// defaultHeaderWidgets is the header a fresh install shows: attention only,
-// so the count line is byte-identical to before widgets existed.
+// widgets is the configured list, or the shipped default when the file
+// names none. Resolved here at use rather than filled in by withDefaults so
+// SaveConfig never pins today's default into the user's file -- a later
+// default reaches everyone who never chose.
+func (h HeaderConfig) widgets() []widgetSetting {
+	if len(h.Widgets) == 0 {
+		return defaultHeaderWidgets()
+	}
+	return h.Widgets
+}
+
+// defaultHeaderWidgets is the header a fresh install shows. now-playing
+// sits left of the attention pills and hides itself when nothing plays (and
+// on a box without omarchy-shell), so the count line stays byte-identical to
+// before widgets existed until there is something to show. ^w lands on
+// now-playing first -- the widget with controls is the one you focus for.
 func defaultHeaderWidgets() []widgetSetting {
-	return []widgetSetting{{Name: "attention"}}
+	return []widgetSetting{{Name: "now-playing"}, {Name: "attention"}}
 }
 
 // namedWidget pairs a catalog name with an instance so Model can route a

@@ -174,3 +174,20 @@ func TestShellWidget_TwoInstancesKeepTheirOwnResults(t *testing.T) {
 		t.Errorf("battery = %q", got)
 	}
 }
+
+// TestHeaderConfig_DefaultIsNeverPersisted: a config that names no widgets
+// resolves to the shipped default at use, but withDefaults leaves the field
+// empty so a save cannot freeze today's default into the user's file.
+func TestHeaderConfig_DefaultIsNeverPersisted(t *testing.T) {
+	c := Config{}.withDefaults()
+	if len(c.Header.Widgets) != 0 {
+		t.Errorf("withDefaults filled Header.Widgets = %v; it must stay empty", c.Header.Widgets)
+	}
+	if got := c.Header.widgets(); len(got) != 2 || got[0].Name != "now-playing" || got[1].Name != "attention" {
+		t.Errorf("widgets() = %v, want the shipped default", got)
+	}
+	chosen := HeaderConfig{Widgets: []widgetSetting{{Name: "host"}}}
+	if got := chosen.widgets(); len(got) != 1 || got[0].Name != "host" {
+		t.Errorf("widgets() ignored the user's choice: %v", got)
+	}
+}

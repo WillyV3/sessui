@@ -52,9 +52,7 @@ func (c Config) withDefaults() Config {
 	if c.Theme.Palette == "" {
 		c.Theme.Palette = paletteAuto
 	}
-	if len(c.Header.Widgets) == 0 {
-		c.Header.Widgets = defaultHeaderWidgets()
-	}
+	// Header.Widgets is deliberately NOT filled here: see HeaderConfig.widgets.
 	return c
 }
 

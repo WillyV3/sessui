@@ -108,7 +108,7 @@ func TestRenderHeaderLine_Default(t *testing.T) {
 }
 
 // TestRenderHeaderLine_DefaultIsByteIdenticalToLegacy pins the promise made
-// when widgets were introduced: with the shipped config (attention only,
+// when widgets were introduced: with the shipped config (now-playing silent,
 // nothing focused) the count line is exactly what it was before -- the
 // tally, a run of spaces, the pills flush right at width.
 func TestRenderHeaderLine_DefaultIsByteIdenticalToLegacy(t *testing.T) {
