@@ -699,11 +699,11 @@ func TestAbbreviatePath(t *testing.T) {
 // with cp3 uninstalled or failing, the same marker means nothing about
 // liveness.
 //
-// This is not hypothetical: ~/projects and ~/hfl-projects are Syncthing-
-// replicated across the fleet, so those markers land on machines that have
-// never run cp3 (macbook1 carries 8 of them with no cp3 installed). Before
-// this, every one of them rendered as a dead peer -- a column of red dots
-// claiming the fleet was down on a machine that had simply never asked.
+// Without the distinction, any box with spawn-peer workspaces but no cp3
+// installed renders every one of them as a dead peer -- a column of red dots
+// claiming the fleet is down on a machine that simply never asked. (Do not
+// cite macbook1 here: it has cp3, its markers are native to it, and its
+// down-dots are real -- see TestParsePeersPlain_RealMacbookCapture.)
 //
 // The reachable subtest is the true-positive control: identical input, an
 // empty but ANSWERED roster, must still report the workspace as down. Without
@@ -749,4 +749,53 @@ func TestBuild_PeerJoin_CP3Unreachable(t *testing.T) {
 			t.Error("AgentExited() = false, want true (cp3 answered and this peer was not in the roster)")
 		}
 	})
+}
+
+// macbook1PeerTable is a verbatim `cp3 peers` capture from macbook1 on
+// 2026-09-03, taken because that box runs a pre-`--json` cp3 and so exercises
+// the plain-table fallback that omarchy never hits. Columns are SPACE-padded
+// to fixed width (no tabs anywhere in the real output), and the machine column
+// is inconsistent for one physical laptop -- macbook1 appears as both "Mac"
+// and "macbook1.local" -- which is why nothing here may key off that value.
+const macbook1PeerTable = `AGENT           MACHINE         CWD
+astrobot        omarchy         /home/willy/hfl-projects/astrobot
+cad-guy         macbook1.local  /Users/williamvansickleiii/projects/cad-lab
+caretaker       omarchy         /home/willy/projects/raspdeck-learning/builder-area
+macbook1-home   Mac             /Users/williamvansickleiii
+sontara-mobile  macbook1.local  /Users/williamvansickleiii/hfl-projects/astrobot
+stilgar         omarchy         /home/willy/hfl-projects/sontara-sales
+`
+
+// TestParsePeersPlain_RealMacbookCapture pins the pre-`--json` fallback
+// against real output, because a silent zero-row parse there is
+// indistinguishable from "cp3 answered, nobody is up" and would paint every
+// marked workspace as a dead peer.
+//
+// strings.Fields splits on runs of any whitespace, so space-padded columns
+// parse without special handling -- this test exists to keep that true, not
+// because it is subtle.
+func TestParsePeersPlain_RealMacbookCapture(t *testing.T) {
+	rows := parsePeersPlain(macbook1PeerTable)
+
+	if len(rows) != 6 {
+		t.Fatalf("parsed %d rows, want 6 (a zero/short parse here reads as \"nobody is up\" and fakes dead peers)", len(rows))
+	}
+	for _, r := range rows {
+		if !r.Up {
+			t.Errorf("%s: Up = false, want true (the plain table only ever lists live peers)", r.Name)
+		}
+		if r.Machine == "" || r.Cwd == "" {
+			t.Errorf("%s: Machine=%q Cwd=%q, want both populated", r.Name, r.Machine, r.Cwd)
+		}
+	}
+
+	// The cwd join is what must survive, since the machine column is
+	// unreliable: one laptop reports both "Mac" and "macbook1.local".
+	byCWD, byName := indexPeers(rows)
+	if got := byCWD["/Users/williamvansickleiii/projects/cad-lab"]; got != "cad-guy" {
+		t.Errorf("cwd join = %q, want cad-guy", got)
+	}
+	if _, ok := byName["macbook1-home"]; !ok {
+		t.Error(`byName is missing "macbook1-home" (the row whose machine is "Mac")`)
+	}
 }
