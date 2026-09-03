@@ -1,0 +1,35 @@
+# Release binaries so a node can install sessui without a Go toolchain.
+# sessui.tmux builds from source when Go is present; these archives are the
+# path for machines where it is not, or is too old for go.mod's directive.
+version: 2
+
+project_name: sessui
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - env:
+      - CGO_ENABLED=0 # pure Go; keeps darwin/linux cross-builds hermetic
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w
+
+archives:
+  - formats: [tar.gz]
+    # Predictable name so an installer can construct the URL rather than
+    # having to query the releases API.
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: git
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
