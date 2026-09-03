@@ -10,9 +10,9 @@ Each of these cost real time. Read before touching the relevant area.
 therefore uses the explicit `$HOME/.local/bin/sessui`, and you install to both.
 Symptom when this bites: "my changes aren't showing up on prefix+s."
 
-### 2. tmux 3.8+ for a live popup
+### 2. tmux 3.7+ for a live popup
 Live updates (spinner, marquee, second-counters) inside `display-popup` rely on
-the popup-redraw fix in tmux 3.8 (upstream issue 4920 — "popup overwritten by
+the popup-redraw fix in tmux 3.7 (upstream issue 4920, listed in the 3.6b→3.7 CHANGES — "popup overwritten by
 background updates"). On older tmux the popup renders once and never animates.
 
 ### 3. The theme "muted" slot is a border colour, not a text colour

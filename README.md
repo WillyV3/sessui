@@ -29,7 +29,7 @@ set -g @plugin 'WillyV3/sessui'
 Then `prefix + I` to fetch and build it. Two requirements, both checked at
 install and reported in the tmux status line if missing:
 
-- **tmux 3.8+** (`tmux -V`). Older tmux opens the popup but never redraws it
+- **tmux 3.7+** (`tmux -V`). Older tmux opens the popup but never redraws it
   live — no spinners, no counters. Homebrew's tmux is current; a distro tmux
   may not be.
 - **[Go](https://go.dev) on the PATH of the shell tmux was started from.**
@@ -99,20 +99,23 @@ configuration. Four more columns exist and can be added today by hand-editing
 (window count), `attached` (a client is on it right now), `machine` (the bound
 peer's machine, on its own).
 
-### The column editor — `ctrl+e`
+### Settings — `ctrl+e`
 
 The header row of the table is the editing surface; the real table redraws
-live underneath every edit. Three rows, `↑↓` picks which one you're on:
+live underneath every edit — in the palette and glyph set you are choosing,
+not a mockup. Five rows, `↑↓` picks which one you're on:
 
 | row       | what it is                                  | keys                                              |
 |-----------|---------------------------------------------|---------------------------------------------------|
 | **strip** | the visible columns, exactly as laid out    | `←→` select · `enter` arm, then `←→` swaps · `space` hide · `+/-` resize |
 | **add**   | hidden columns as chips — age, windows, attached, machine | `←→` select · `space` add (it returns to the slot it left) |
 | **popup** | the tmux popup width                        | `+/-` in steps of 4                               |
+| **theme** | `auto` (follows Omarchy, else dark) · `dark` · `light` | `←→` choose — the preview redraws in it |
+| **icons** | `nerd` · `ascii` (no Nerd Font needed)      | `←→` choose — the preview redraws in it           |
 
 `esc` applies and closes — there is no confirm step, on purpose. `ctrl+z`
-abandons (closes, applies nothing). `ctrl+r` resets everything to the
-shipped table and width.
+abandons (closes, applies nothing; the look snaps back). `ctrl+r` resets
+everything to the shipped table, width, `auto` and `nerd`.
 
 **Where the popup width lives:** the `popup` row writes the `@sessui-width`
 tmux option, the same one you can set in `tmux.conf`. It takes effect on the
@@ -174,7 +177,7 @@ a refresh.
 | `enter`        | switch to the highlighted session, or create one named by the filter |
 | `ctrl+r`       | rename the highlighted session          |
 | `ctrl+x`       | kill the highlighted session            |
-| `ctrl+e`       | column editor                           |
+| `ctrl+e`       | settings: columns, popup width, theme, icons |
 | `ctrl+w`       | focus the header widgets                |
 | `esc`          | close                                   |
 
@@ -188,8 +191,8 @@ also dispatches the keys, so it cannot drift from what the keys do.
 
 ## Requirements
 
-- **tmux 3.8+** — the live-updating popup (spinners, scrolling, recency
-  counters) relies on the popup-redraw fix in 3.8; on older tmux the popup
+- **tmux 3.7+** — the live-updating popup (spinners, scrolling, recency
+  counters) relies on the popup-redraw fix in 3.7 (issue 4920); on older tmux the popup
   paints once and won't animate.
 - **Go 1.21+** — to build the binary (install and update only); it fetches
   the module's own toolchain version automatically.
@@ -204,7 +207,7 @@ network — not blank, absent — and everything else works the same.
 
 `CLAUDE.md` (repo root) is the agent/dev context — constraints, build/verify
 workflow, code map. `docs/ARCHITECTURE.md` explains the two layers;
-`docs/GOTCHAS.md` collects the traps (GOBIN shadow, tmux 3.8, theme colours,
+`docs/GOTCHAS.md` collects the traps (GOBIN shadow, tmux 3.7, theme colours,
 the fixed-width layout) — read it before touching layout, colour, filtering, or
 the tmux bind.
 

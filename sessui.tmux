@@ -12,12 +12,12 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BIN="$DIR/sessui"
 
-# tmux 3.8+: the popup only redraws live (spinners, counters, marquee) from
-# 3.8. Say so once at install rather than let an older tmux look broken.
+# tmux 3.7+: the popup only redraws live (spinners, counters, marquee) from
+# 3.7 (issue 4920, in the 3.6b→3.7 changelog). Say so once at install.
 # awk, not sort -V: BSD sort on macOS is not guaranteed to have -V.
 tmux_version="$(tmux -V | sed 's/[^0-9.]//g')"
-if ! printf '%s\n' "$tmux_version" | awk -F. '{ exit !($1 > 3 || ($1 == 3 && $2 >= 8)) }'; then
-	tmux display-message "sessui: needs tmux 3.8+ (this is $tmux_version) — the popup will not redraw live"
+if ! printf '%s\n' "$tmux_version" | awk -F. '{ exit !($1 > 3 || ($1 == 3 && $2 >= 7)) }'; then
+	tmux display-message "sessui: needs tmux 3.7+ (this is $tmux_version) — the popup will not redraw live"
 fi
 
 # Build on first install and whenever a source file is newer than the binary

@@ -20,9 +20,11 @@ type Config struct {
 	Columns []columnSetting `json:"columns,omitempty"`
 	// Icons is the glyph set: "nerd" (the default, needs a Nerd Font) or
 	// "ascii" for a terminal without one -- the usual state of a Mac.
-	Icons  glyphSet     `json:"icons,omitempty"`
-	Theme  ThemeConfig  `json:"theme,omitempty"`
-	Header HeaderConfig `json:"header,omitempty"`
+	Icons glyphSet    `json:"icons,omitempty"`
+	Theme ThemeConfig `json:"theme,omitempty"`
+	// omitzero, not omitempty: omitempty never drops a struct, so a save
+	// would write `"header": {}` for a user who never chose widgets.
+	Header HeaderConfig `json:"header,omitzero"`
 }
 
 // ThemeConfig is how the palette is chosen and, optionally, recoloured.

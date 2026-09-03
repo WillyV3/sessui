@@ -32,7 +32,7 @@ func TestConfigError_SurvivesReload(t *testing.T) {
 
 	// A successful save of a new column set replaces the bad file; the
 	// notice is now stale and goes.
-	next, _ = m.Update(columnsAppliedMsg{columns: defaultColumnSettings()})
+	next, _ = m.Update(editorAppliedMsg{columns: defaultColumnSettings(), theme: ThemeConfig{Palette: paletteAuto}, icons: glyphsNerd})
 	m = next.(Model)
 	if strings.Contains(m.footerLine(), "config:") {
 		t.Errorf("footer after a successful save = %q, want the config error cleared", m.footerLine())

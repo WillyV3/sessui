@@ -7,11 +7,13 @@ package ui
 // live underneath every edit. Nothing here is a mockup of the table; it is
 // the table, mid-edit.
 //
-// Three rows, one cursor axis each:
+// Five rows, one cursor axis each:
 //
 //	strip   the visible columns, laid out EXACTLY as the preview below them
 //	shelf   the hidden columns as compact chips -- what you can add
 //	width   the popup's width, applied on the next open
+//	theme   the palette source (auto / dark / light) -- the preview redraws in it
+//	icons   the glyph set (nerd / ascii) -- likewise
 //
 // ↑/↓ picks the row. Within a row the same verbs always mean the same thing:
 //
@@ -19,6 +21,7 @@ package ui
 //	enter arm the selected column for moving / drop it back (strip only)
 //	space hide the selected column (strip) / show it (shelf)
 //	+/-   resize the selected column (strip), or adjust the width (width row)
+//	←/→   on the theme and icons rows: choose
 //	esc   apply and close -- or, while armed, just disarm
 //
 // Two non-verbs: ctrl+z abandons (close, apply nothing), ctrl+r resets to
@@ -44,6 +47,7 @@ package ui
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/help"
@@ -78,14 +82,38 @@ const (
 	popupWidthStep    = 4
 )
 
-// editorRow is which of the three rows the cursor is on.
+// editorRow is which of the editor's rows the cursor is on: the three
+// column rows, then the two theme rows (palette, glyph set) -- the same
+// surface, the same verbs, and the preview underneath redraws in the chosen
+// look as you cycle.
 type editorRow int
 
 const (
 	rowStrip editorRow = iota
 	rowShelf
 	rowWidth
+	rowTheme
+	rowIcons
+	rowLast = rowIcons
 )
+
+// palettes is the ←→ cycle order on the theme row.
+var palettes = []paletteSource{paletteAuto, paletteDark, paletteLight}
+
+func cyclePalette(cur paletteSource, delta int) paletteSource {
+	i := slices.Index(palettes, cur)
+	if i < 0 {
+		i = 0
+	}
+	return palettes[(i+delta+len(palettes))%len(palettes)]
+}
+
+func cycleGlyphs(cur glyphSet) glyphSet {
+	if cur == glyphsASCII {
+		return glyphsNerd
+	}
+	return glyphsASCII
+}
 
 // editorKeys is the editor's whole vocabulary, held as one key.Binding set
 // so bubbles/help renders straight off it. ShortHelp (below) only ever
@@ -128,9 +156,20 @@ func newEditorKeys() editorKeys {
 type columnEditor struct {
 	styles   Styles
 	showPeer bool
-	preview  func(tableLayout) string
+	preview  func(Styles, tableLayout) string
 	keys     editorKeys
 	help     help.Model
+
+	// theme and icons are the palette source and glyph set being edited.
+	// restyle re-derives Styles from a choice -- flipping the package glyph
+	// set and icon colours on the way, the same path New takes -- so the
+	// preview under the editor IS the choice, not a mockup of it. orig is
+	// what ctrl+z puts back.
+	theme     ThemeConfig
+	icons     glyphSet
+	origTheme ThemeConfig
+	origIcons glyphSet
+	restyle   func(ThemeConfig, glyphSet) Styles
 
 	// order is EVERY catalog column, visible and hidden, in one stable
 	// sequence. Hiding does not move a column; it flags it, so hide-then-show
@@ -164,18 +203,32 @@ type columnEditor struct {
 // the user change for next time. preview is Model's real renderer
 // (renderHeader + renderRow over live sessions) -- production code, not a
 // mockup.
-func newColumnEditor(styles Styles, current []columnSetting, showPeer bool, width, popupWidth int, preview func(tableLayout) string) *columnEditor {
-	hp := help.New()
-	// Tint bubbles/help onto the app's own palette instead of its baked-in
-	// greys -- Header and Help are already the right colours for "key" and
-	// "de-emphasised description," so this is a straight reuse.
-	hp.Styles.ShortKey = styles.Header
-	hp.Styles.ShortDesc = styles.Help
-	hp.Styles.ShortSeparator = styles.Help
-
-	e := &columnEditor{styles: styles, showPeer: showPeer, preview: preview, keys: newEditorKeys(), help: hp, width: width, popupWidth: clampPopupWidth(popupWidth)}
+func newColumnEditor(styles Styles, current []columnSetting, showPeer bool, width, popupWidth int, preview func(Styles, tableLayout) string) *columnEditor {
+	e := &columnEditor{styles: styles, showPeer: showPeer, preview: preview, keys: newEditorKeys(), help: help.New(), width: width, popupWidth: clampPopupWidth(popupWidth)}
+	// Until withTheme is called the theme rows edit the shipped defaults and
+	// restyle is a no-op: the column tests never touch the palette.
+	e.withTheme(ThemeConfig{Palette: paletteAuto}, glyphsNerd, func(ThemeConfig, glyphSet) Styles { return styles })
 	e.reset(current)
 	return e
+}
+
+// withTheme seats the editor on the user's current theme choice and the
+// function that realises a choice as Styles (Model's restyle).
+func (e *columnEditor) withTheme(t ThemeConfig, g glyphSet, restyle func(ThemeConfig, glyphSet) Styles) *columnEditor {
+	e.theme, e.icons, e.origTheme, e.origIcons, e.restyle = t, g, t, g, restyle
+	e.tint()
+	return e
+}
+
+// tint re-derives the editor's own styles from the current choice and
+// re-tints bubbles/help onto them -- Header and Help are already the right
+// colours for "key" and "de-emphasised description," so this is a straight
+// reuse instead of help's baked-in greys.
+func (e *columnEditor) tint() {
+	e.styles = e.restyle(e.theme, e.icons)
+	e.help.Styles.ShortKey = e.styles.Header
+	e.help.Styles.ShortDesc = e.styles.Help
+	e.help.Styles.ShortSeparator = e.styles.Help
 }
 
 func clampPopupWidth(w int) int {
@@ -314,19 +367,25 @@ func (e *columnEditor) move(delta int) {
 		}
 	case rowWidth:
 		e.adjustWidth(delta)
+	case rowTheme:
+		e.theme.Palette = cyclePalette(e.theme.Palette, delta)
+		e.tint()
+	case rowIcons:
+		e.icons = cycleGlyphs(e.icons)
+		e.tint()
 	}
 }
 
-// changeRow moves ↑/↓ between strip, shelf and width. Arming is a strip
-// state, so leaving the strip drops it. The shelf is skipped when it is
-// empty -- there is nothing to select there -- so ↓ from a full strip goes
-// straight to the width row.
+// changeRow moves ↑/↓ between the rows. Arming is a strip state, so leaving
+// the strip drops it. The shelf is skipped when it is empty -- there is
+// nothing to select there -- so ↓ from a full strip goes straight to the
+// width row.
 func (e *columnEditor) changeRow(delta int) {
 	next := e.row + editorRow(delta)
 	if next == rowShelf && e.shelfCursor < 0 {
 		next += editorRow(delta)
 	}
-	if next < rowStrip || next > rowWidth {
+	if next < rowStrip || next > rowLast {
 		return
 	}
 	e.row, e.armed = next, false
@@ -426,7 +485,14 @@ func (e *columnEditor) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case "ctrl+r":
 		e.reset(defaultColumnSettings())
 		e.popupWidth = popupWidthDefault
+		e.theme.Palette, e.icons = paletteAuto, glyphsNerd
+		e.tint()
 	case "ctrl+z":
+		// The preview was restyled live; put the process back the way the
+		// list expects it before handing the keyboard back.
+		if e.theme.Palette != e.origTheme.Palette || e.icons != e.origIcons {
+			e.restyle(e.origTheme, e.origIcons)
+		}
 		e.finished, e.abandoned = true, true
 	case "esc":
 		if e.armed { // esc while armed only disarms -- it does not close
@@ -441,7 +507,7 @@ func (e *columnEditor) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // result satisfies overlay.go's pull-based overlayResult contract. The
 // editor is finished after an unarmed esc or a ctrl+z (never by ctrl+r,
 // which resets in place without closing). esc's apply Cmd captures the
-// current Result() and popup width into a columnsAppliedMsg for Model to
+// current Result() and popup width into a editorAppliedMsg for Model to
 // persist and relayout from; ctrl+z finishes with a nil apply, so Model
 // drops the overlay and nothing else happens -- the list was never
 // re-laid-out while the editor was open, so "abandon" needs no undo.
@@ -452,8 +518,8 @@ func (e *columnEditor) result() (finished bool, apply tea.Cmd) {
 	if e.abandoned {
 		return true, nil
 	}
-	settings, width := e.Result(), e.popupWidth
-	return true, func() tea.Msg { return columnsAppliedMsg{columns: settings, popupWidth: width} }
+	msg := editorAppliedMsg{columns: e.Result(), popupWidth: e.popupWidth, theme: e.theme, icons: e.icons}
+	return true, func() tea.Msg { return msg }
 }
 
 // ShortHelp/FullHelp make columnEditor itself a help.KeyMap: the same
@@ -479,6 +545,9 @@ func (e *columnEditor) ShortHelp() []key.Binding {
 	case rowWidth:
 		resize.SetHelp("+/-", "adjust")
 		bindings = []key.Binding{rows, resize}
+	case rowTheme, rowIcons:
+		move.SetHelp("←→", "choose")
+		bindings = []key.Binding{rows, move}
 	}
 	return append(bindings, close, e.keys.abandon, e.keys.reset)
 }
@@ -603,17 +672,32 @@ func (e *columnEditor) renderShelf(width int) string {
 // option and takes effect on the next prefix+s; the popup you are looking
 // at cannot resize itself, and the hint says so.
 func (e *columnEditor) renderWidthRow(width int) string {
-	value := fmt.Sprintf("%d cols", e.popupWidth)
-	if e.row == rowWidth {
-		value = highlightCell(e.styles.selectedBG, e.styles.Header.Render(" "+value+" "))
-	} else {
-		value = e.styles.Muted.Render(value)
-	}
 	hint := "tmux popup width · +/- to change · takes effect next open"
 	if e.popupWidth != popupWidthDefault {
 		hint = fmt.Sprintf("tmux popup width · default %d · takes effect next open", popupWidthDefault)
 	}
-	return e.controlRow("popup", value, hint, width)
+	return e.controlRow("popup", e.valueCell(fmt.Sprintf("%d cols", e.popupWidth), e.row == rowWidth), hint, width)
+}
+
+// renderThemeRow and renderIconsRow are the two theme choices as value
+// cells; the proof of a choice is the preview below, redrawn in it.
+func (e *columnEditor) renderThemeRow(width int) string {
+	hint := "palette · auto follows the Omarchy theme, else dark · ←→ to change"
+	return e.controlRow("theme", e.valueCell(string(e.theme.Palette), e.row == rowTheme), hint, width)
+}
+
+func (e *columnEditor) renderIconsRow(width int) string {
+	hint := "glyph set · ascii for a terminal without a Nerd Font · ←→ to change"
+	return e.controlRow("icons", e.valueCell(string(e.icons), e.row == rowIcons), hint, width)
+}
+
+// valueCell is a control row's single value: highlighted while its row has
+// the cursor, faint otherwise.
+func (e *columnEditor) valueCell(value string, selected bool) string {
+	if selected {
+		return highlightCell(e.styles.selectedBG, e.styles.Header.Render(" "+value+" "))
+	}
+	return e.styles.Muted.Render(value)
 }
 
 // padRight lays left flush-left and right flush-right on one line at width,
@@ -629,10 +713,12 @@ func padRight(left, right string, width int) string {
 
 // View renders the editor's whole screen at the CURRENT window width: a
 // title band (the contextual help line right-aligned), the strip, the shelf,
-// the popup-width row, a blank line, then the live preview.
+// the popup-width, theme and icons rows, a blank line, then the live preview
+// -- drawn in the editor's current styles, so a theme choice is seen before
+// it is applied.
 func (e *columnEditor) View() string {
 	width := e.width
-	title := e.styles.Header.Render("edit columns")
+	title := e.styles.Header.Render("settings")
 	e.help.Width = max(width-lipgloss.Width(title)-1, 0)
 	band := padRight(title, e.help.View(e), width)
 
@@ -642,7 +728,9 @@ func (e *columnEditor) View() string {
 		e.renderStrip(layout),
 		e.renderShelf(width),
 		e.renderWidthRow(width),
+		e.renderThemeRow(width),
+		e.renderIconsRow(width),
 		"",
-		e.preview(layout),
+		e.preview(e.styles, layout),
 	)
 }

@@ -13,7 +13,7 @@ import (
 // point, see its package doc), it records the visible column ids it was
 // handed, comma-joined, so tests can assert on exactly what the editor
 // decided was visible without parsing rendered table cells.
-func idsPreview(l tableLayout) string {
+func idsPreview(_ Styles, l tableLayout) string {
 	ids := make([]string, len(l.columns))
 	for i, c := range l.columns {
 		ids[i] = string(c.id)
@@ -252,7 +252,7 @@ func TestColumnEditor_Reset(t *testing.T) {
 // TestColumnEditor_Esc covers both esc behaviours in one place, against the
 // pull-based overlayResult contract (result()): while armed esc only
 // disarms (the editor stays unfinished), and otherwise it finishes, and
-// result()'s apply Cmd resolves to a columnsAppliedMsg carrying Result().
+// result()'s apply Cmd resolves to a editorAppliedMsg carrying Result().
 func TestColumnEditor_Esc(t *testing.T) {
 	t.Run("armed: only disarms", func(t *testing.T) {
 		e := newTestEditor()
@@ -275,14 +275,14 @@ func TestColumnEditor_Esc(t *testing.T) {
 			t.Fatal("esc unarmed did not finish the editor")
 		}
 		if apply == nil {
-			t.Fatal("result() returned a nil apply cmd, want one that resolves to columnsAppliedMsg")
+			t.Fatal("result() returned a nil apply cmd, want one that resolves to editorAppliedMsg")
 		}
-		msg, ok := apply().(columnsAppliedMsg)
+		msg, ok := apply().(editorAppliedMsg)
 		if !ok {
-			t.Fatalf("apply() = %#v, want columnsAppliedMsg", msg)
+			t.Fatalf("apply() = %#v, want editorAppliedMsg", msg)
 		}
 		if want := e.Result(); !equalColumnSettings(msg.columns, want) {
-			t.Errorf("columnsAppliedMsg.columns = %v, want %v", msg.columns, want)
+			t.Errorf("editorAppliedMsg.columns = %v, want %v", msg.columns, want)
 		}
 	})
 }
@@ -305,7 +305,7 @@ func equalColumnSettings(a, b []columnSetting) bool {
 // under a header the user just hid.
 func TestColumnEditor_PreviewSeesOnlyVisibleColumns(t *testing.T) {
 	var captured tableLayout
-	capture := func(l tableLayout) string { captured = l; return idsPreview(l) }
+	capture := func(s Styles, l tableLayout) string { captured = l; return idsPreview(s, l) }
 	e := newColumnEditor(testStyles(), defaultColumnSettings(), true, defaultUsableWidth, popupWidthDefault, capture)
 
 	e = press(t, e, "right", "space") // hide apps
@@ -391,7 +391,7 @@ func TestColumnEditor_AbandonDiscards(t *testing.T) {
 		}
 	}
 	open := func() *columnEditor {
-		return newColumnEditor(testStyles(), defaultColumnSettings(), true, defaultUsableWidth, popupWidthDefault, func(tableLayout) string { return "" })
+		return newColumnEditor(testStyles(), defaultColumnSettings(), true, defaultUsableWidth, popupWidthDefault, func(Styles, tableLayout) string { return "" })
 	}
 
 	t.Run("ctrl+z after a swap finishes with nil apply", func(t *testing.T) {
@@ -413,7 +413,7 @@ func TestColumnEditor_AbandonDiscards(t *testing.T) {
 		if !finished || apply == nil {
 			t.Fatalf("result() = (%v, %v), want (true, non-nil) -- esc must apply", finished, apply != nil)
 		}
-		got := apply().(columnsAppliedMsg).columns
+		got := apply().(editorAppliedMsg).columns
 		if got[1].ID != colActive || got[2].ID != colApps {
 			t.Errorf("applied order = %v, want apps and active swapped", got)
 		}
@@ -426,7 +426,7 @@ func TestColumnEditor_AbandonDiscards(t *testing.T) {
 // popup. Before this, all ten catalog columns shared the strip and status
 // collapsed to a stub while "windows" truncated to "wi".
 func TestColumnEditor_StripNeverWiderThanPopup(t *testing.T) {
-	e := newColumnEditor(testStyles(), defaultColumnSettings(), true, defaultUsableWidth, 112, func(tableLayout) string { return "" })
+	e := newColumnEditor(testStyles(), defaultColumnSettings(), true, defaultUsableWidth, 112, func(Styles, tableLayout) string { return "" })
 	for _, hide := range [][]string{{}, {"right", "space"}, {"right", "space", "space"}, {"down", "space", "space", "space"}} {
 		e.reset(defaultColumnSettings())
 		e = press(t, e, hide...)
@@ -446,7 +446,7 @@ func TestColumnEditor_StripNeverWiderThanPopup(t *testing.T) {
 // columns not in the shipped table start on the shelf; ↓ reaches it, ←/→
 // selects a chip, space shows it -- it appears in the strip and in Result().
 func TestColumnEditor_ShelfAddsAColumn(t *testing.T) {
-	e := newColumnEditor(testStyles(), defaultColumnSettings(), true, defaultUsableWidth, 112, func(tableLayout) string { return "" })
+	e := newColumnEditor(testStyles(), defaultColumnSettings(), true, defaultUsableWidth, 112, func(Styles, tableLayout) string { return "" })
 	if e.row != rowStrip {
 		t.Fatalf("opens on row %d, want the strip", e.row)
 	}
@@ -476,7 +476,7 @@ func TestColumnEditor_ShelfAddsAColumn(t *testing.T) {
 // TestColumnEditor_PopupWidth: the width row adjusts in steps, clamps, and
 // rides out on the apply msg; ctrl+r puts it back to the default.
 func TestColumnEditor_PopupWidth(t *testing.T) {
-	e := newColumnEditor(testStyles(), defaultColumnSettings(), true, defaultUsableWidth, 112, func(tableLayout) string { return "" })
+	e := newColumnEditor(testStyles(), defaultColumnSettings(), true, defaultUsableWidth, 112, func(Styles, tableLayout) string { return "" })
 	e = press(t, e, "down", "down") // strip -> shelf -> width
 	if e.row != rowWidth {
 		t.Fatalf("row = %d, want the width row", e.row)
@@ -493,11 +493,11 @@ func TestColumnEditor_PopupWidth(t *testing.T) {
 	}
 	e = press(t, e, "esc")
 	_, apply := e.result()
-	if got := apply().(columnsAppliedMsg).popupWidth; got != popupWidthMax {
+	if got := apply().(editorAppliedMsg).popupWidth; got != popupWidthMax {
 		t.Errorf("applied popupWidth = %d, want %d", got, popupWidthMax)
 	}
 
-	e = newColumnEditor(testStyles(), defaultColumnSettings(), true, defaultUsableWidth, 140, func(tableLayout) string { return "" })
+	e = newColumnEditor(testStyles(), defaultColumnSettings(), true, defaultUsableWidth, 140, func(Styles, tableLayout) string { return "" })
 	e = press(t, e, "ctrl+r")
 	if e.popupWidth != popupWidthDefault {
 		t.Errorf("ctrl+r left popupWidth at %d, want %d", e.popupWidth, popupWidthDefault)
@@ -511,7 +511,7 @@ func TestColumnEditor_PopupWidth(t *testing.T) {
 // number on its row. And the legend must fit without "…" at the shipped
 // width on every row -- a truncated legend is a hidden key.
 func TestColumnEditor_RendersAtTheWindowNotTheSetting(t *testing.T) {
-	e := newColumnEditor(testStyles(), defaultColumnSettings(), true, defaultUsableWidth, popupWidthMax, func(tableLayout) string { return "preview" })
+	e := newColumnEditor(testStyles(), defaultColumnSettings(), true, defaultUsableWidth, popupWidthMax, func(Styles, tableLayout) string { return "preview" })
 	for _, row := range []string{"strip", "shelf", "popup"} {
 		lines := strings.Split(e.View(), "\n")
 		for i, line := range lines {
@@ -526,5 +526,132 @@ func TestColumnEditor_RendersAtTheWindowNotTheSetting(t *testing.T) {
 	}
 	if !strings.Contains(e.View(), "240 cols") || !strings.Contains(e.View(), "tmux popup width") {
 		t.Errorf("popup row must show the setting and name what it is:\n%s", e.View())
+	}
+}
+
+// themedEditor seats an editor on auto/nerd with a restyle that records every
+// choice it is asked to realise and returns Styles whose Count is bold -- so
+// a preview can prove it was drawn with the restyled Styles, not the ones the
+// editor opened with.
+func themedEditor() (e *columnEditor, calls *[]string, seen *Styles) {
+	calls, seen = new([]string), new(Styles)
+	restyle := func(tc ThemeConfig, g glyphSet) Styles {
+		*calls = append(*calls, string(tc.Palette)+"/"+string(g))
+		s := testStyles()
+		s.Count = lipgloss.NewStyle().Bold(true)
+		return s
+	}
+	e = newColumnEditor(testStyles(), defaultColumnSettings(), true, defaultUsableWidth, popupWidthDefault,
+		func(s Styles, l tableLayout) string { *seen = s; return idsPreview(s, l) }).
+		withTheme(ThemeConfig{Palette: paletteAuto}, glyphsNerd, restyle)
+	return e, calls, seen
+}
+
+func tapKeys(e *columnEditor, keys ...tea.KeyType) *columnEditor {
+	for _, k := range keys {
+		next, _ := e.Update(tea.KeyMsg{Type: k})
+		e = next.(*columnEditor)
+	}
+	return e
+}
+
+func goToRow(t *testing.T, e *columnEditor, row editorRow) *columnEditor {
+	t.Helper()
+	for i := 0; e.row != row; i++ {
+		if i > int(rowLast) {
+			t.Fatalf("row %d unreachable by ↓ (stuck on %d)", row, e.row)
+		}
+		e = tapKeys(e, tea.KeyDown)
+	}
+	return e
+}
+
+func last(calls *[]string) string { return (*calls)[len(*calls)-1] }
+
+func TestColumnEditor_ThemeRowCyclesAndApplies(t *testing.T) {
+	e, calls, _ := themedEditor()
+	e = goToRow(t, e, rowTheme)
+
+	for _, want := range []paletteSource{paletteDark, paletteLight, paletteAuto} {
+		if e = tapKeys(e, tea.KeyRight); e.theme.Palette != want {
+			t.Fatalf("→ gave %q, want %q", e.theme.Palette, want)
+		}
+	}
+	if e = tapKeys(e, tea.KeyLeft); e.theme.Palette != paletteLight {
+		t.Fatalf("← from auto gave %q, want light (wrap)", e.theme.Palette)
+	}
+	if got := last(calls); got != "light/nerd" {
+		t.Errorf("last restyle = %q, want light/nerd", got)
+	}
+
+	e = tapKeys(e, tea.KeyEsc)
+	done, apply := e.result()
+	if !done || apply == nil {
+		t.Fatal("esc must finish with an apply")
+	}
+	msg := apply().(editorAppliedMsg)
+	if msg.theme.Palette != paletteLight || msg.icons != glyphsNerd {
+		t.Errorf("applied theme=%q icons=%q, want light/nerd", msg.theme.Palette, msg.icons)
+	}
+}
+
+func TestColumnEditor_IconsRowToggles(t *testing.T) {
+	e, calls, _ := themedEditor()
+	e = goToRow(t, e, rowIcons)
+	if e = tapKeys(e, tea.KeyRight); e.icons != glyphsASCII {
+		t.Fatalf("→ gave %q, want ascii", e.icons)
+	}
+	if e = tapKeys(e, tea.KeyRight); e.icons != glyphsNerd {
+		t.Fatalf("→ again gave %q, want nerd", e.icons)
+	}
+	e = tapKeys(e, tea.KeyLeft)
+	if got := last(calls); got != "auto/ascii" {
+		t.Errorf("last restyle = %q, want auto/ascii", got)
+	}
+	_, apply := tapKeys(e, tea.KeyEsc).result()
+	if got := apply().(editorAppliedMsg).icons; got != glyphsASCII {
+		t.Errorf("applied icons = %q, want ascii", got)
+	}
+}
+
+func TestColumnEditor_PreviewIsDrawnInTheChosenTheme(t *testing.T) {
+	e, _, seen := themedEditor()
+	e = goToRow(t, e, rowTheme)
+	e = tapKeys(e, tea.KeyRight)
+	e.View()
+	if !seen.Count.GetBold() {
+		t.Error("preview was handed the opening Styles, not the restyled ones")
+	}
+	if first := strings.SplitN(e.View(), "\n", 2)[0]; strings.Contains(first, "…") {
+		t.Errorf("legend truncated on the theme row: %q", first)
+	}
+}
+
+func TestColumnEditor_AbandonRestoresTheme(t *testing.T) {
+	e, calls, _ := themedEditor()
+	e = goToRow(t, e, rowIcons)
+	e = tapKeys(e, tea.KeyRight, tea.KeyUp, tea.KeyRight) // ascii, then dark
+	if got := last(calls); got != "dark/ascii" {
+		t.Fatalf("setup: last restyle = %q", got)
+	}
+	e = tapKeys(e, tea.KeyCtrlZ)
+	if got := last(calls); got != "auto/nerd" {
+		t.Errorf("after ^z the process must be restyled to the original: last = %q", got)
+	}
+	if done, apply := e.result(); !done || apply != nil {
+		t.Errorf("^z: finished=%v apply=%v, want true,nil", done, apply)
+	}
+}
+
+func TestColumnEditor_ResetRestoresThemeDefaults(t *testing.T) {
+	e, calls, _ := themedEditor()
+	e = goToRow(t, e, rowTheme)
+	e = tapKeys(e, tea.KeyRight, tea.KeyRight, tea.KeyDown, tea.KeyRight) // light, ascii
+	e = tapKeys(e, tea.KeyCtrlR)
+	if e.theme.Palette != paletteAuto || e.icons != glyphsNerd {
+		t.Errorf("after ^r theme=%q icons=%q, want auto/nerd", e.theme.Palette, e.icons)
+	}
+	if got := last(calls); got != "auto/nerd" {
+		t.Errorf("^r must restyle to the defaults: last = %q", got)
 	}
 }

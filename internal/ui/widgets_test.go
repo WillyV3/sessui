@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -209,5 +210,22 @@ func TestHeaderConfig_DefaultIsNeverPersisted(t *testing.T) {
 	chosen := HeaderConfig{Widgets: []widgetSetting{{Name: "host"}}}
 	if got := chosen.widgets(); len(got) != 1 || got[0].Name != "host" {
 		t.Errorf("widgets() ignored the user's choice: %v", got)
+	}
+}
+
+// TestConfig_UnchosenHeaderIsAbsentFromTheFile: a save without a widget
+// choice writes no "header" key at all -- not an empty object.
+func TestConfig_UnchosenHeaderIsAbsentFromTheFile(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	if err := SaveConfig(Config{}.withDefaults()); err != nil {
+		t.Fatal(err)
+	}
+	path, _ := configPath()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), `"header"`) {
+		t.Errorf("config.json carries a header key with nothing chosen:\n%s", data)
 	}
 }

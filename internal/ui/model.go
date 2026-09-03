@@ -30,14 +30,27 @@ type reloadMsg struct {
 	err      error
 }
 
-// columnsAppliedMsg is the column editor's apply Cmd result (see coledit.go's
+// editorAppliedMsg is the column editor's apply Cmd result (see coledit.go's
 // result()): the edited settings, ready for Model to persist and relayout
 // from. Kept overlay-agnostic on purpose -- the editor never touches Model
 // internals directly, the same shape rename/kill already use via
 // doAndReload's Cmd-returns-a-msg pattern.
-type columnsAppliedMsg struct {
+type editorAppliedMsg struct {
 	columns    []columnSetting
 	popupWidth int // for @sessui-width; takes effect on the next open
+	theme      ThemeConfig
+	icons      glyphSet
+}
+
+// restyle applies a theme choice process-wide -- the glyph set, the icon
+// colours -- and returns the palette and Styles for it. New, the editor's
+// live preview and the apply path all go through here, so a choice looks
+// the same in all three.
+func restyle(t ThemeConfig, g glyphSet) (Palette, Styles) {
+	useGlyphs(g)
+	p := loadPalette(t.Palette)
+	applyTheme(p)
+	return p, newStyles(p, t.Roles)
 }
 
 // editorPreviewRows caps how many real session rows the column editor's live
@@ -48,15 +61,15 @@ const editorPreviewRows = 6
 // SAME renderers the live list uses, over the first few real sessions, at
 // whatever layout the editor is currently trying -- so the user edits the
 // actual table, never a mockup.
-func (m Model) editorPreview(layout tableLayout) string {
-	lines := []string{renderHeader(m.styles, layout)}
+func (m Model) editorPreview(styles Styles, layout tableLayout) string {
+	lines := []string{renderHeader(styles, layout)}
 	now := time.Now()
 	for i, item := range m.list.Items() {
 		if i >= editorPreviewRows {
 			break
 		}
 		if it, ok := item.(sessionItem); ok {
-			c := cell{styles: m.styles, home: m.home, now: now, session: it.Session, spinner: m.spinner}
+			c := cell{styles: styles, home: m.home, now: now, session: it.Session, spinner: m.spinner}
 			lines = append(lines, renderRow(layout, c, 0, false))
 		}
 	}
@@ -88,7 +101,7 @@ type Model struct {
 	// field, not m.err, because m.err is cleared by every successful reload
 	// (~1s) -- which meant this notice was on screen for one frame and the
 	// user never learned why their layout came back as the shipped one. It
-	// clears only when a later save succeeds (see columnsAppliedMsg).
+	// clears only when a later save succeeds (see editorAppliedMsg).
 	configErr error
 
 	err           error
@@ -118,10 +131,7 @@ func New() Model {
 	// The glyph set must be chosen before applyTheme, whose Icon values
 	// capture glyphU's output; and before loadPalette only for tidiness.
 	cfg, cfgErr := LoadConfig()
-	useGlyphs(cfg.Icons)
-	palette := loadPalette(cfg.Theme.Palette)
-	applyTheme(palette)
-	styles := newStyles(palette, cfg.Theme.Roles)
+	palette, styles := restyle(cfg.Theme, cfg.Icons)
 	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 	delegate := &rowDelegate{styles: styles, home: home, spinner: sp}
 
@@ -245,13 +255,16 @@ func reloadCmd() tea.Cmd {
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
-	case columnsAppliedMsg:
+	case editorAppliedMsg:
 		// The editor's result, delivered through the generic overlay path
-		// (updateOverlay ran its apply Cmd). Persist the whole config, not
-		// just columns, so the icon and theme choices the editor doesn't
-		// touch survive the write.
+		// (updateOverlay ran its apply Cmd). Columns, theme and glyph set
+		// land in the config together; the theme is realised right here so
+		// the list comes back already in the chosen look.
 		m.columns = msg.columns
-		m.cfg.Columns = msg.columns
+		m.cfg.Columns, m.cfg.Theme, m.cfg.Icons = msg.columns, msg.theme, msg.icons
+		palette, styles := restyle(msg.theme, msg.icons)
+		m.styles, m.delegate.styles = styles, styles
+		m.huhTheme, m.help, m.list.Styles = newHuhTheme(palette), newHelp(palette), themedListStyles(palette)
 		if err := SaveConfig(m.cfg); err != nil {
 			m.err = err
 		} else {
@@ -462,7 +475,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case key.Matches(msg, appKeys.Columns):
-		m.overlay = newColumnEditor(m.styles, m.columns, m.showPeer, m.usableWidth(), session.PopupWidth(), m.editorPreview)
+		m.overlay = newColumnEditor(m.styles, m.columns, m.showPeer, m.usableWidth(), session.PopupWidth(), m.editorPreview).
+			withTheme(m.cfg.Theme, m.cfg.Icons, func(t ThemeConfig, g glyphSet) Styles { _, s := restyle(t, g); return s })
 		return m, m.overlay.Init()
 
 	case key.Matches(msg, appKeys.Widgets):
