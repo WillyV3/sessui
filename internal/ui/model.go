@@ -100,6 +100,9 @@ type Model struct {
 	// it. Both feed relayout, which is the only writer of delegate.layout.
 	columns  []columnSetting
 	showPeer bool
+	// widgets is the header's widget section, resolved from cfg.Header once
+	// at startup. Pollers among them refresh on the reload tick.
+	widgets []namedWidget
 	// marqueeFrame advances the selected row's scroll; marqueeFor is the
 	// session name it's counting for, so the frame resets to 0 (back to the
 	// row's start) the instant the selection moves -- keyed by name, not
@@ -151,13 +154,45 @@ func New() Model {
 	// A corrupt config is surfaced in the footer rather than fatal: the
 	// user still gets a working table (LoadConfig returns defaults on any
 	// failure) and can see why their layout came back as the shipped one.
+	widgets, widgetErr := resolveWidgets(cfg.Header.Widgets)
+	if cfgErr == nil {
+		cfgErr = widgetErr // a bad widget entry is a config problem, surfaced the same way
+	}
+
 	m := Model{
 		list: l, spinner: sp, delegate: delegate, home: home, styles: styles,
 		huhTheme: newHuhTheme(palette), help: newHelp(palette),
-		cfg: cfg, columns: cfg.Columns, configErr: cfgErr,
+		cfg: cfg, columns: cfg.Columns, widgets: widgets, configErr: cfgErr,
 	}
 	m.relayout()
 	return m
+}
+
+// widgetState is the frame's inputs for the header widgets.
+func (m Model) widgetState() widgetState {
+	sessions := make([]session.Session, 0, len(m.list.Items()))
+	for _, item := range m.list.Items() {
+		if it, ok := item.(sessionItem); ok {
+			sessions = append(sessions, it.Session)
+		}
+	}
+	return widgetState{
+		sessions: sessions, now: time.Now(), styles: m.styles,
+		filtering: m.filtering(), shown: len(m.list.VisibleItems()), total: len(m.list.Items()),
+	}
+}
+
+// pollWidgets asks every poller for its refresh Cmd; batched onto the
+// reload tick so a widget's command runs at most once per tick, off the
+// main loop, and never from a render.
+func (m Model) pollWidgets() tea.Cmd {
+	var cmds []tea.Cmd
+	for _, w := range m.widgets {
+		if p, ok := w.widget.(poller); ok {
+			cmds = append(cmds, p.poll())
+		}
+	}
+	return tea.Batch(cmds...)
 }
 
 // usableWidth is the row width the list has to work with: the window minus
@@ -246,7 +281,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, marqueeTickCmd()
 
 	case reloadTickMsg:
-		return m, tea.Batch(reloadCmd(), reloadTickCmd())
+		return m, tea.Batch(reloadCmd(), reloadTickCmd(), m.pollWidgets())
+
+	case widgetPollMsg:
+		for _, w := range m.widgets {
+			if p, ok := w.widget.(poller); ok && w.name == msg.name {
+				p.absorb(msg)
+			}
+		}
+		return m, nil
 
 	case reloadMsg:
 		if msg.err != nil {
@@ -422,6 +465,13 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, appKeys.Columns):
 		m.overlay = newColumnEditor(m.styles, m.columns, m.showPeer, m.usableWidth(), session.PopupWidth(), m.editorPreview)
 		return m, m.overlay.Init()
+
+	case key.Matches(msg, appKeys.Widgets):
+		if len(m.widgets) == 0 {
+			return m, nil
+		}
+		m.overlay = newHeaderFocus(m.widgets, m.help)
+		return m, m.overlay.Init()
 	}
 
 	// Type-to-filter without "/": the first printable key arms the list's own
@@ -526,32 +576,11 @@ func (m Model) View() string {
 // a tool opened to switch, not to monitor. While filtering it doubles as
 // match feedback ("3 of 13"), the one moment the number earns its place.
 func (m Model) countLine() string {
-	needsYou, mail := attentionCounts(m.list.Items())
-	return renderCountLine(m.styles, m.usableWidth(), countLineData{
-		Total: len(m.list.Items()), Shown: len(m.list.VisibleItems()),
-		Filtering: m.filtering(), NeedsYou: needsYou, Mail: mail,
-	})
-}
-
-// attentionCounts tallies the two signals the header surfaces because they
-// exist nowhere else on screen at a glance: sessions whose agent rang for
-// the user, and peers holding unread cp3 mail. Both are counted over ALL
-// items, not the filtered view -- a filter narrows what you're looking at,
-// not what needs you.
-func attentionCounts(items []list.Item) (needsYou, mail int) {
-	for _, item := range items {
-		it, ok := item.(sessionItem)
-		if !ok {
-			continue
-		}
-		if it.State == session.StateNotify {
-			needsYou++
-		}
-		if it.OwedMail {
-			mail++
-		}
+	focus := -1
+	if hf, ok := m.overlay.(*headerFocus); ok {
+		focus = hf.index
 	}
-	return needsYou, mail
+	return renderHeaderLine(m.widgetState(), m.usableWidth(), m.widgets, focus)
 }
 
 // filtering reports whether the user is actively filtering with text typed.

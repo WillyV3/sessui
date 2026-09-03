@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // glyphNeedsYou echoes the bell that actually drives Notify (tmux's
@@ -25,51 +26,69 @@ const glyphNeedsYou = 0xF0F3 // nf-fa-bell
 // reused verbatim so the two count-line signals never invent new iconography.
 const glyphMail = "✉"
 
-// countLineData is everything renderCountLine needs: the plain tally
-// (Total/Shown/Filtering, the line's original content, wording unchanged) plus
-// the two attention counts. NeedsYou/Mail are counts, not booleans, so a pill
-// reads "3" rather than just lighting up -- worth knowing before you scan for
-// which row.
-type countLineData struct {
-	Total, Shown int
-	Filtering    bool
-	NeedsYou     int
-	Mail         int
+// attentionPills is the collapsed attention widget: a pill per nonzero
+// signal -- needs-you then mail -- and nothing at all at zero, so the line
+// stays exactly as quiet as it used to be when nothing is pending.
+func attentionPills(s Styles, needsYou, mail int) string {
+	var pills []string
+	if needsYou > 0 {
+		pills = append(pills, s.NeedsYouPill.Render(fmt.Sprintf("%s %d", glyphU(glyphNeedsYou), needsYou)))
+	}
+	if mail > 0 {
+		pills = append(pills, s.MailPill.Render(fmt.Sprintf("%s %d", glyphMail, mail)))
+	}
+	return strings.Join(pills, " ")
 }
 
-// renderCountLine draws the tally on the left (identical wording to the old
-// countLine) and, flush right at width, a pill per nonzero attention signal --
-// needs-you then mail. A pill is silent at zero: no glyph, no background, no
-// reserved space, so the line stays exactly as quiet as it used to be when
-// nothing is pending, and only grows a designed status band when something
-// is.
-func renderCountLine(s Styles, width int, c countLineData) string {
+// countText is the tally on the left: "N sessions", or "S of N sessions"
+// while a filter is narrowing the list.
+func countText(s Styles, total, shown int, filtering bool) string {
 	noun := "sessions"
-	if c.Total == 1 {
+	if total == 1 {
 		noun = "session"
 	}
-	left := fmt.Sprintf("%d %s", c.Total, noun)
-	if c.Filtering && c.Shown != c.Total {
-		left = fmt.Sprintf("%d of %d %s", c.Shown, c.Total, noun)
+	if filtering && shown != total {
+		return s.Count.Render(fmt.Sprintf("%d of %d %s", shown, total, noun))
 	}
-	leftRendered := s.Count.Render(left)
+	return s.Count.Render(fmt.Sprintf("%d %s", total, noun))
+}
 
-	var pills []string
-	if c.NeedsYou > 0 {
-		pills = append(pills, s.NeedsYouPill.Render(fmt.Sprintf("%s %d", glyphU(glyphNeedsYou), c.NeedsYou)))
-	}
-	if c.Mail > 0 {
-		pills = append(pills, s.MailPill.Render(fmt.Sprintf("%s %d", glyphMail, c.Mail)))
-	}
-	if len(pills) == 0 {
-		return leftRendered
+// widgetGap separates collapsed widgets in the header's right section.
+const widgetGap = "  "
+
+// renderHeaderLine composes the count line: the tally flush left, the widget
+// section flush right. focus is the index of the expanded widget, or -1 when
+// the list has the keyboard -- then every widget is its icon. An expanded
+// widget gets whatever the tally and the other icons leave. The result is
+// always ONE line of at most width cells: widgets contract to fit (x/ansi
+// truncation, the primitive bubbles scrolls with) rather than the header
+// ever growing a second line and pushing the table down.
+func renderHeaderLine(st widgetState, width int, widgets []namedWidget, focus int) string {
+	left := countText(st.styles, st.total, st.shown, st.filtering)
+
+	var icons []string
+	iconsWidth := 0
+	for i, w := range widgets {
+		if i == focus {
+			continue
+		}
+		if ic := w.icon(st); ic != "" {
+			icons = append(icons, ic)
+			iconsWidth += lipgloss.Width(ic) + len(widgetGap)
+		}
 	}
 
-	right := strings.Join(pills, " ")
-	// ponytail: real content (a tally + two short pills) never comes close to
-	// filling 108 columns -- this floor only stops strings.Repeat from seeing
-	// a negative count on a pathologically narrow width, it doesn't fire in
-	// practice.
-	gap := max(width-lipgloss.Width(leftRendered)-lipgloss.Width(right), 1)
-	return leftRendered + strings.Repeat(" ", gap) + right
+	var right []string
+	if focus >= 0 && focus < len(widgets) {
+		// Everything not taken by the tally, the icons and their gaps is the
+		// expanded widget's; it truncates itself to that.
+		avail := width - lipgloss.Width(left) - len(widgetGap) - iconsWidth
+		right = append(right, widgets[focus].expand(st, max(avail, 0)))
+	}
+	right = append(right, icons...)
+	rightLine := strings.Join(right, widgetGap)
+	if rightLine == "" {
+		return left
+	}
+	return padRight(left, ansi.Truncate(rightLine, max(width-lipgloss.Width(left)-1, 0), "…"), width)
 }

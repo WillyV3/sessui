@@ -20,8 +20,9 @@ type Config struct {
 	Columns []columnSetting `json:"columns,omitempty"`
 	// Icons is the glyph set: "nerd" (the default, needs a Nerd Font) or
 	// "ascii" for a terminal without one -- the usual state of a Mac.
-	Icons glyphSet    `json:"icons,omitempty"`
-	Theme ThemeConfig `json:"theme,omitempty"`
+	Icons  glyphSet     `json:"icons,omitempty"`
+	Theme  ThemeConfig  `json:"theme,omitempty"`
+	Header HeaderConfig `json:"header,omitempty"`
 }
 
 // ThemeConfig is how the palette is chosen and, optionally, recoloured.
@@ -50,6 +51,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.Theme.Palette == "" {
 		c.Theme.Palette = paletteAuto
+	}
+	if len(c.Header.Widgets) == 0 {
+		c.Header.Widgets = defaultHeaderWidgets()
 	}
 	return c
 }
