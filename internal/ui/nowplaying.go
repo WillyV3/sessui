@@ -8,6 +8,7 @@ package ui
 // box without omarchy-shell (a Mac today) the widget simply hides.
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os/exec"
@@ -40,18 +41,32 @@ type mediaClient interface {
 	volume(verb string) error  // omarchy-audio-output-volume <verb>
 }
 
+// omarchyMedia shells out with the same timeout the shell widget uses:
+// quickshell restarts on every theme switch, and a call that hangs across
+// one must not pile up a goroutine per tick.
 type omarchyMedia struct{}
 
+func mediaCommand(name string, args ...string) (*exec.Cmd, context.CancelFunc) {
+	ctx, cancel := context.WithTimeout(context.Background(), widgetExecTimeout)
+	return exec.CommandContext(ctx, name, args...), cancel
+}
+
 func (omarchyMedia) status() ([]byte, error) {
-	return exec.Command("omarchy-shell", "media", "status").Output()
+	cmd, cancel := mediaCommand("omarchy-shell", "media", "status")
+	defer cancel()
+	return cmd.Output()
 }
 
 func (omarchyMedia) media(method string) error {
-	return exec.Command("omarchy-shell", "media", method).Run()
+	cmd, cancel := mediaCommand("omarchy-shell", "media", method)
+	defer cancel()
+	return cmd.Run()
 }
 
 func (omarchyMedia) volume(verb string) error {
-	return exec.Command("omarchy-audio-output-volume", verb).Run()
+	cmd, cancel := mediaCommand("omarchy-audio-output-volume", verb)
+	defer cancel()
+	return cmd.Run()
 }
 
 // mediaAvailable is true where omarchy-shell is on PATH: probed once.

@@ -260,10 +260,10 @@ func (w agentsWidget) expand(st widgetState, width int) string {
 // ---- "icon":"…"}}`. The command runs on the reload tick, off the main
 // ---- loop, with a timeout; the first line of its output is the widget.
 
-// shellPollTimeout bounds a misbehaving command so it can never stall the
+// widgetExecTimeout bounds every command a widget runs so none can stall the
 // header. The reload tick is 2s; a widget that takes longer than this is
 // simply stale until the next tick.
-const shellPollTimeout = 1500 * time.Millisecond
+const widgetExecTimeout = 1500 * time.Millisecond
 
 type shellWidget struct {
 	cmd    string
@@ -303,7 +303,7 @@ func (w *shellWidget) expand(st widgetState, width int) string {
 
 func (w *shellWidget) poll() tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), shellPollTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), widgetExecTimeout)
 		defer cancel()
 		out, err := exec.CommandContext(ctx, "sh", "-c", w.cmd).Output()
 		first, _, _ := strings.Cut(strings.TrimSpace(string(out)), "\n")
