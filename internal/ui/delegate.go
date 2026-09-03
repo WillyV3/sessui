@@ -39,6 +39,9 @@ type rowDelegate struct {
 	styles  Styles
 	home    string
 	spinner spinner.Model
+	// showPeer hides the peer column outright when false (no cp3 peers in
+	// use). Set from the session list on each reload -- see applyReload.
+	showPeer bool
 	// marqueeFrame is a monotonic counter (advanced by the marquee tick,
 	// kept in sync with Model's) that drives the selected row's scroll so
 	// its long cells reveal fully instead of truncating -- see marqueeCell.
@@ -54,7 +57,7 @@ func (d *rowDelegate) Render(w io.Writer, m list.Model, index int, item list.Ite
 	if !ok {
 		return
 	}
-	fmt.Fprint(w, renderRow(d.styles, d.home, time.Now(), it.Session, d.spinner, d.marqueeFrame, index == m.Index()))
+	fmt.Fprint(w, renderRow(d.styles, d.home, time.Now(), it.Session, d.spinner, d.marqueeFrame, index == m.Index(), d.showPeer))
 }
 
 // Column widths. lipgloss's ANSI-aware Width() padding gives the row a
@@ -86,8 +89,33 @@ const (
 	activeColWidth = 5 // last-active elapsed: "now", "3m", "2h", "234d"
 	cwdColWidth    = 20
 	peerColWidth   = 14 // ●/○ liveness dot + the peer name when it differs + ✉
-	statusColWidth = usableWidth - cursorColWidth - iconColWidth - nameColWidth - activeColWidth - cwdColWidth - peerColWidth - 5
 )
+
+// statusWidth is the width left for the status (summary) column. When no cp3
+// peers are in use the peer column is hidden outright (not just blanked), so
+// status reclaims that column's width plus its separator -- the native
+// pane-title summaries get the extra room. It's a function, not a const,
+// precisely so it grows when the peer column drops out.
+func statusWidth(showPeer bool) int {
+	// base: cursor, name, icons, active, cwd, status + 4 separators between them
+	w := usableWidth - cursorColWidth - iconColWidth - nameColWidth - activeColWidth - cwdColWidth - 4
+	if showPeer {
+		w -= peerColWidth + 1 // the peer cell plus its separator
+	}
+	return w
+}
+
+// anyPeer reports whether any session joined a live-or-known cp3 peer -- i.e.
+// claude-peers is in use on this box. When false the peer column disappears
+// (see statusWidth, renderRow, renderHeader).
+func anyPeer(sessions []session.Session) bool {
+	for _, s := range sessions {
+		if s.PeerName != "" {
+			return true
+		}
+	}
+	return false
+}
 
 // fixedCol is one row cell: a fixed width that never wraps (Inline) and
 // never overruns (MaxWidth) -- see the width-budget comment above for why
@@ -105,7 +133,7 @@ func fixedCol(w int) lipgloss.Style {
 // offset on every row regardless of how long the name, summary, or cwd is;
 // the selected row's over-long cells scroll (marqueeCell) and it gets a
 // full-width highlight (selectRow).
-func renderRow(styles Styles, home string, now time.Time, s session.Session, sp spinner.Model, frame int, selected bool) string {
+func renderRow(styles Styles, home string, now time.Time, s session.Session, sp spinner.Model, frame int, selected, showPeer bool) string {
 	cursor := "  "
 	if selected {
 		cursor = styles.Cursor.Render("> ")
@@ -121,10 +149,11 @@ func renderRow(styles Styles, home string, now time.Time, s session.Session, sp 
 		" ",
 		marqueeCell(cwdColWidth, frame, selected, renderCWD(styles, session.AbbreviatePath(s.CWD, home))),
 		" ",
-		marqueeCell(peerColWidth, frame, selected, renderPeer(styles, s)),
-		" ",
-		marqueeCell(statusColWidth, frame, selected, renderStatus(styles, now, s)),
 	}
+	if showPeer {
+		cells = append(cells, marqueeCell(peerColWidth, frame, selected, renderPeer(styles, s)), " ")
+	}
+	cells = append(cells, marqueeCell(statusWidth(showPeer), frame, selected, renderStatus(styles, now, s)))
 	row := lipgloss.JoinHorizontal(lipgloss.Top, cells...)
 	if selected {
 		row = styles.selectRow(row)
@@ -185,7 +214,7 @@ const (
 // styles.Header) so it reads as a header, not another data row. Mirrors
 // renderRow's cell order and widths exactly so labels sit over their data.
 // There's no "peer" label -- the peer is folded into the session cell.
-func renderHeader(styles Styles) string {
+func renderHeader(styles Styles, showPeer bool) string {
 	h := styles.Header
 	cells := []string{
 		fixedCol(cursorColWidth).Render(""),
@@ -197,10 +226,11 @@ func renderHeader(styles Styles) string {
 		" ",
 		fixedCol(cwdColWidth).Render(h.Render(glyphU(glyphCWD) + " cwd")),
 		" ",
-		fixedCol(peerColWidth).Render(h.Render(glyphU(glyphPeer) + " peer")),
-		" ",
-		fixedCol(statusColWidth).Render(h.Render(glyphU(glyphStatus) + " status")),
 	}
+	if showPeer {
+		cells = append(cells, fixedCol(peerColWidth).Render(h.Render(glyphU(glyphPeer)+" peer")), " ")
+	}
+	cells = append(cells, fixedCol(statusWidth(showPeer)).Render(h.Render(glyphU(glyphStatus)+" status")))
 	return lipgloss.JoinHorizontal(lipgloss.Top, cells...)
 }
 
@@ -322,10 +352,11 @@ func renderCWD(styles Styles, abbrev string) string {
 func DumpRows(sessions []session.Session) string {
 	m := New()
 	sortSessions(sessions)
+	showPeer := anyPeer(sessions)
 	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 	var b strings.Builder
 	for _, s := range sessions {
-		b.WriteString(renderRow(m.styles, m.home, time.Now(), s, sp, 0, false))
+		b.WriteString(renderRow(m.styles, m.home, time.Now(), s, sp, 0, false, showPeer))
 		b.WriteString("\n")
 	}
 	return b.String()

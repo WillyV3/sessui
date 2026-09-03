@@ -121,7 +121,7 @@ func TestRenderPeer(t *testing.T) {
 }
 
 func TestRenderHeader_HasColumnLabels(t *testing.T) {
-	header := renderHeader(testStyles())
+	header := renderHeader(testStyles(), true)
 	for _, label := range []string{"apps", "session", "cwd", "peer", "status"} {
 		if !strings.Contains(header, label) {
 			t.Errorf("renderHeader() = %q, want to contain %q", header, label)
@@ -130,6 +130,45 @@ func TestRenderHeader_HasColumnLabels(t *testing.T) {
 	// The last-active column is labelled by its pulse glyph alone (no word).
 	if !strings.Contains(header, glyphU(glyphActive)) {
 		t.Errorf("renderHeader() = %q, want the active pulse glyph", header)
+	}
+}
+
+// TestPeerColumnHidden proves the peer column disappears entirely -- not just
+// blanks -- when no cp3 peers are in use (showPeer=false): the status column
+// reclaims the peer column's width + separator, the header drops the peer
+// label/glyph, and a row whose session joins a peer stops rendering that peer.
+// The showPeer=true half is the true-positive control: it confirms the peer
+// name WOULD show, so the false assertion is really testing the hide.
+func TestPeerColumnHidden(t *testing.T) {
+	if got, want := statusWidth(false), statusWidth(true)+peerColWidth+1; got != want {
+		t.Errorf("statusWidth(false) = %d, want %d (status must reclaim peer col + separator)", got, want)
+	}
+
+	styles := testStyles()
+	header := renderHeader(styles, false)
+	if strings.Contains(header, glyphU(glyphPeer)) || strings.Contains(header, "peer") {
+		t.Errorf("hidden-peer header must not carry the peer label/glyph: %q", header)
+	}
+	if !strings.Contains(header, "status") {
+		t.Errorf("hidden-peer header still needs the status label: %q", header)
+	}
+	if w := lipgloss.Width(header); w > usableWidth {
+		t.Errorf("hidden-peer header width = %d, want <= %d", w, usableWidth)
+	}
+
+	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot))
+	now := time.Now()
+	s := session.Session{Name: "sontara", Activity: now, Machine: "omarchy", PeerName: "astrobot"}
+
+	if row := renderRow(styles, "/home/willy", now, s, sp, 0, false, true); !strings.Contains(row, "astrobot") {
+		t.Fatalf("control: peer-shown row should render the peer name, got %q", row)
+	}
+	row := renderRow(styles, "/home/willy", now, s, sp, 0, false, false)
+	if strings.Contains(row, "astrobot") {
+		t.Errorf("hidden-peer row must not render the peer name: %q", row)
+	}
+	if w := lipgloss.Width(row); w > usableWidth {
+		t.Errorf("hidden-peer row width = %d, want <= %d", w, usableWidth)
 	}
 }
 
@@ -185,13 +224,13 @@ func TestMarqueeCell_RevealsTail(t *testing.T) {
 	now := time.Now()
 	long := session.Session{Name: "this-is-a-very-long-session-name-indeed", Activity: now}
 
-	if row := renderRow(styles, "/home/willy", now, long, sp, 0, false); strings.Contains(row, "indeed") {
+	if row := renderRow(styles, "/home/willy", now, long, sp, 0, false, true); strings.Contains(row, "indeed") {
 		t.Fatalf("unselected row must truncate the tail, but it showed: %q", row)
 	}
 
 	revealed := false
 	for f := 0; f < 200 && !revealed; f++ {
-		revealed = strings.Contains(renderRow(styles, "/home/willy", now, long, sp, f, true), "indeed")
+		revealed = strings.Contains(renderRow(styles, "/home/willy", now, long, sp, f, true, true), "indeed")
 	}
 	if !revealed {
 		t.Fatal("selected row never scrolled far enough to reveal the hidden tail")
@@ -221,7 +260,7 @@ func TestRenderRow_NoWrapAtPopupWidth(t *testing.T) {
 		PeerSummary: longSummary,
 	}
 
-	row := renderRow(styles, "/home/willy", now, s, sp, 0, false)
+	row := renderRow(styles, "/home/willy", now, s, sp, 0, false, true)
 	if h := lipgloss.Height(row); h != 1 {
 		t.Fatalf("renderRow() height = %d, want 1 (long content must truncate, not wrap the row)", h)
 	}
@@ -229,7 +268,7 @@ func TestRenderRow_NoWrapAtPopupWidth(t *testing.T) {
 		t.Errorf("renderRow() width = %d, want <= %d (usable width inside the popup)", w, usableWidth)
 	}
 
-	header := renderHeader(styles)
+	header := renderHeader(styles, true)
 	if hh := lipgloss.Height(header); hh != 1 {
 		t.Errorf("renderHeader() height = %d, want 1", hh)
 	}

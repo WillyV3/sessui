@@ -233,6 +233,7 @@ func (m *Model) applyReload(sessions []session.Session) tea.Cmd {
 	}
 
 	sortSessions(sessions)
+	m.delegate.showPeer = anyPeer(sessions)
 
 	cmd := m.list.SetItems(toItems(sessions))
 
@@ -458,7 +459,7 @@ func (m Model) headerLine() string {
 	if m.filtering() {
 		return m.list.FilterInput.View()
 	}
-	return renderHeader(m.styles)
+	return renderHeader(m.styles, m.delegate.showPeer)
 }
 
 // footerLine is the one line sessui always shows below the list: the rename
