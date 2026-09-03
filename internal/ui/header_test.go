@@ -59,7 +59,7 @@ func TestRenderCountLine(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := renderCountLine(styles, usableWidth, c.data)
+			got := renderCountLine(styles, defaultUsableWidth, c.data)
 
 			if c.wantExact != "" && got != c.wantExact {
 				t.Errorf("renderCountLine() = %q, want exactly %q", got, c.wantExact)
@@ -84,8 +84,8 @@ func TestRenderCountLine(t *testing.T) {
 // merely somewhere on it.
 func TestRenderCountLine_Width(t *testing.T) {
 	styles := testStyles()
-	got := renderCountLine(styles, usableWidth, countLineData{Total: 14, NeedsYou: 2, Mail: 1})
-	if w := lipgloss.Width(got); w != usableWidth {
-		t.Errorf("lipgloss.Width(renderCountLine()) = %d, want exactly %d", w, usableWidth)
+	got := renderCountLine(styles, defaultUsableWidth, countLineData{Total: 14, NeedsYou: 2, Mail: 1})
+	if w := lipgloss.Width(got); w != defaultUsableWidth {
+		t.Errorf("lipgloss.Width(renderCountLine()) = %d, want exactly %d", w, defaultUsableWidth)
 	}
 }

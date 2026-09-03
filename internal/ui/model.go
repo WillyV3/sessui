@@ -465,17 +465,32 @@ func (m Model) View() string {
 // a tool opened to switch, not to monitor. While filtering it doubles as
 // match feedback ("3 of 13"), the one moment the number earns its place.
 func (m Model) countLine() string {
-	total := len(m.list.Items())
-	noun := "sessions"
-	if total == 1 {
-		noun = "session"
-	}
-	if m.filtering() {
-		if shown := len(m.list.VisibleItems()); shown != total {
-			return m.styles.Count.Render(fmt.Sprintf("%d of %d %s", shown, total, noun))
+	needsYou, mail := attentionCounts(m.list.Items())
+	return renderCountLine(m.styles, m.usableWidth(), countLineData{
+		Total: len(m.list.Items()), Shown: len(m.list.VisibleItems()),
+		Filtering: m.filtering(), NeedsYou: needsYou, Mail: mail,
+	})
+}
+
+// attentionCounts tallies the two signals the header surfaces because they
+// exist nowhere else on screen at a glance: sessions whose agent rang for
+// the user, and peers holding unread cp3 mail. Both are counted over ALL
+// items, not the filtered view -- a filter narrows what you're looking at,
+// not what needs you.
+func attentionCounts(items []list.Item) (needsYou, mail int) {
+	for _, item := range items {
+		it, ok := item.(sessionItem)
+		if !ok {
+			continue
+		}
+		if it.State == session.StateNotify {
+			needsYou++
+		}
+		if it.OwedMail {
+			mail++
 		}
 	}
-	return m.styles.Count.Render(fmt.Sprintf("%d %s", total, noun))
+	return needsYou, mail
 }
 
 // filtering reports whether the user is actively filtering with text typed.
