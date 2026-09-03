@@ -90,11 +90,8 @@ func applyTheme(p Palette) {
 	appIcons = buildAppIcons()
 }
 
-// glyphU turns a codepoint into its one-rune string. A function, not a
-// literal, so every glyph above is built from a plain hex int -- immune to
-// literal Nerd Font runes getting mangled in transport (see the comment
-// above), and the codepoint is visible right at the call site either way.
-func glyphU(codepoint rune) string { return string(codepoint) }
+// glyphU lives in glyphs.go: it is the one place a codepoint becomes text,
+// and therefore the one place the ASCII set for font-less terminals plugs in.
 
 // appIcons maps a running app's command name to its Icon. Nil until
 // applyTheme builds it (the Icons it references are colored there).

@@ -18,6 +18,9 @@ import (
 // and Load never fails the program over a missing or unreadable one.
 type Config struct {
 	Columns []columnSetting `json:"columns,omitempty"`
+	// Icons is the glyph set: "nerd" (the default, needs a Nerd Font) or
+	// "ascii" for a terminal without one -- the usual state of a Mac.
+	Icons glyphSet `json:"icons,omitempty"`
 }
 
 // withDefaults fills anything the file left unset, so callers never branch
@@ -26,6 +29,9 @@ type Config struct {
 func (c Config) withDefaults() Config {
 	if len(c.Columns) == 0 {
 		c.Columns = defaultColumnSettings()
+	}
+	if c.Icons == "" {
+		c.Icons = glyphsNerd
 	}
 	return c
 }

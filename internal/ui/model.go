@@ -80,6 +80,10 @@ type Model struct {
 // home directory once, up front.
 func New() Model {
 	home, _ := os.UserHomeDir()
+	// The glyph set must be chosen before applyTheme, whose Icon values
+	// capture glyphU's output; and before loadPalette only for tidiness.
+	cfg, cfgErr := LoadConfig()
+	useGlyphs(cfg.Icons)
 	palette := loadPalette()
 	applyTheme(palette)
 	styles := newStyles(palette)
@@ -119,8 +123,6 @@ func New() Model {
 	// A corrupt config is surfaced in the footer rather than fatal: the
 	// user still gets a working table (LoadConfig returns defaults on any
 	// failure) and can see why their layout came back as the shipped one.
-	cfg, cfgErr := LoadConfig()
-
 	m := Model{list: l, spinner: sp, delegate: delegate, renameInput: ti, home: home, styles: styles, columns: cfg.Columns, err: cfgErr}
 	m.relayout()
 	return m
