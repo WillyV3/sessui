@@ -108,7 +108,63 @@ hidden because its hints don't match). Backspacing the filter empty restores the
 column headers (`filtering()` = state Filtering *and* non-empty text).
 
 ### Colour
-All colour comes from `omarchy-theme-color` via `loadPalette` (`style.go`),
-never hardcoded hex. `activeHeat` colours last-active by recency (green < 1m,
-cyan < 1h, yellow < 1d, faint after). Muted text is `Foreground + Faint`, not
-the theme's "muted" slot (see GOTCHAS).
+`loadPalette(source)` (`style.go`) resolves `Config.Theme.Palette`
+(`"auto"` | `"dark"` | `"light"`), never hardcoded hex anywhere else. A
+pinned `dark`/`light` returns a complete `builtinPalettes` entry (Catppuccin
+Mocha / Latte) and shells out to nothing. `auto` checks
+`omarchyThemeAvailable()` — one `exec.LookPath`, not a real exec — and if
+Omarchy isn't there, returns the dark builtin with zero queries; if it is,
+`themeColorQuery` asks `omarchy-theme-color` once per slot (up to 11) and any
+slot it doesn't answer falls back to the dark builtin's value individually,
+so a partial theme degrades per-colour rather than all-or-nothing. `New`
+calls this once at startup, not per render. `activeHeat` colours last-active
+by recency (green < 1m, cyan < 1h, yellow < 1d, faint after). Muted text is
+`Foreground + Faint`, not the theme's "muted" slot (see GOTCHAS).
+
+### Glyph sets — Nerd vs ASCII (`glyphs.go`)
+Every glyph in the app — app icons (`icons.go`), header/column labels
+(`columns.go`, `delegate.go`), the header-pill bell (`header.go`) — is a
+codepoint that passes through `glyphU`, and that is the one place
+`Config.Icons` (`"nerd"` | `"ascii"`) substitutes: ASCII mode looks the
+codepoint up in `asciiGlyphs` and returns a ≤2-cell stand-in (matching
+`iconSlotWidth`), or the visible `asciiUnknown` ("*") if it isn't in the
+table — never blank. `activeGlyphs` is set once via `useGlyphs(cfg.Icons)`
+before `applyTheme` runs (`applyTheme`'s `Icon` values capture `glyphU`'s
+output, so order matters). `TestASCIIGlyphs_CoverEveryCodepoint` reads the
+package source for every `0x…` literal and fails the build if one has no
+entry — a new Nerd glyph can't ship without an ASCII stand-in. The one
+exception: `renderPeer`'s and `header.go`'s literal `"✉"` is a plain Unicode
+character passed directly, not a Nerd Font PUA codepoint via `glyphU`, so it
+needs no stand-in and isn't covered by that test.
+
+### Config persistence (`config.go`)
+`Config` (`Columns`, `Icons`, `Theme.Palette`) is everything sessui owns
+between runs, at `configPath()` — `$XDG_CONFIG_HOME/sessui/config.json`,
+defaulting to `$HOME/.config/sessui/config.json` on every OS including
+macOS (deliberately not `os.UserConfigDir`, which returns `~/Library/Application
+Support` on Darwin and ignores `XDG_CONFIG_HOME` — see GOTCHAS). Popup
+geometry (`@sessui-width` etc.) is deliberately NOT here: tmux needs it
+before this process exists, so it stays a tmux option `sessui.tmux` reads at
+open time. `LoadConfig` never fails the program: a missing file is the
+normal first run (silent, shipped defaults via `withDefaults`); a file that
+exists but won't parse returns defaults too, but its error is threaded back
+to the caller instead of swallowed. `SaveConfig` writes atomically (sibling
+temp file, then rename) and pretty-printed for hand-editing and diffs — it
+exists for the coming settings UI; nothing calls it yet, so today the file is
+hand-edited or left absent.
+
+### Header attention pills (`header.go`)
+`renderCountLine` draws the line above the column headers: the plain tally
+on the left (unchanged wording), and, flush right at the row width, a pill
+per nonzero cross-cutting signal — a needs-you count (bell, on the theme
+red) and an owed-mail count (`✉`, on the accent) — the only two facts on
+screen that are otherwise per-row and easy to miss at a glance. A pill with
+count 0 renders nothing at all: no glyph, no background, no reserved space.
+Pill `Foreground` is `Palette.Background`: whichever end of the light/dark
+scale the active theme sits at, `Background` sits at the opposite end from
+`Red`/`Accent` in both shipped palettes, so the text stays legible without a
+light/dark branch. `Model.attentionCounts` tallies over `m.list.Items()` —
+ALL sessions, not `VisibleItems()` — because a filter narrows what you're
+looking at, not what needs you; width is `m.usableWidth()`, so the pills
+stay flush right as the popup resizes. `--dump` does not render this line
+(`DumpRows` only draws rows) — verify it live.

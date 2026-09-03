@@ -13,7 +13,10 @@ typing to filter; `enter` switches; the selected row scrolls anything too long
 to fit.
 
 Sessions that need you sort to the top and blink; dead agent workspaces sink to
-the bottom.
+the bottom. Above the table, a quiet count line ("14 sessions") grows a
+right-aligned attention pill for each fleet-wide signal that's actually
+pending — a bell + count for sessions that need you, an ✉ + count for peers
+owed a reply — and says nothing when neither is.
 
 ## Install
 
@@ -50,6 +53,45 @@ set -g @sessui-key 'j'
 set -g @sessui-width '90%'
 ```
 
+`@sessui-width` is read at **open** time (not bind time), so a change takes
+effect on the very next `prefix + <key>` with no `tmux source`. The table's
+columns really do adapt to it — below ~112 the status column narrows first,
+floored so it never goes negative; it does not reflow to multiple lines.
+
+## Config file
+
+Separate from the tmux options above (which tmux needs before the binary
+even starts), sessui persists its own settings at
+`$XDG_CONFIG_HOME/sessui/config.json`, defaulting to
+`~/.config/sessui/config.json` — **on every OS, macOS included** (not
+`~/Library/Application Support`; chezmoi manages `~/.config` on the Mac the
+same as on Linux). No file yet, or one that fails to parse: sessui falls back
+to the defaults below and still opens.
+
+| Field           | Values                            | Default | Meaning |
+|-----------------|------------------------------------|---------|---------|
+| `icons`         | `"nerd"` \| `"ascii"`              | `nerd`  | glyph set — `ascii` swaps every Nerd Font icon and header glyph for a plain stand-in, for a terminal without a Nerd Font (the usual Mac case) |
+| `theme.palette` | `"auto"` \| `"dark"` \| `"light"`  | `auto`  | `auto` follows the Omarchy theme when it's on the box, else the built-in dark palette; `dark`/`light` pin a complete built-in (Catppuccin Mocha / Latte) and never query Omarchy |
+| `columns`       | array of `{"id": ..., "width": ...}` | the 6 columns below | which columns show, in what order, and any width override (`width` optional) |
+
+```json
+{
+  "icons": "ascii",
+  "theme": { "palette": "light" }
+}
+```
+
+The shipped table is `session`, `apps`, last-active, `cwd`, `peer`, `status` —
+`peer` disappears outright when no [claude-peers] is in use, regardless of
+configuration. Four more columns exist and can be added today by hand-editing
+`columns` (ids in `internal/ui/columns.go`): `age` (session created), `windows`
+(window count), `attached` (a client is on it right now), `machine` (the bound
+peer's machine, on its own).
+
+> **Not yet shipped — column editor:** an in-app settings UI to add, hide,
+> reorder, and resize columns without hand-editing JSON is in development on
+> an unmerged branch.
+
 ## Keys
 
 | Key            | Action                                  |
@@ -64,16 +106,22 @@ set -g @sessui-width '90%'
 Letters feed the filter, so there are no vim (`j`/`k`) nav keys — the arrows are
 the nav.
 
+> **Not yet shipped — overlay UI:** rename and kill are moving from the plain
+> textinput/confirm above to a shared `huh`-backed overlay; the keys stay the
+> same, the shape of the prompt may change before it merges.
+
 ## Requirements
 
 - **tmux 3.8+** — the live-updating popup (spinners, scrolling, recency
   counters) relies on the popup-redraw fix in 3.8; on older tmux the popup
   paints once and won't animate.
 - **Go** — to build the binary (install and update only).
-- A **Nerd Font** in your terminal for the app / column icons.
+- A **Nerd Font** in your terminal for the app / column icons — or set
+  `"icons": "ascii"` in the [config file](#config-file) if you don't have one
+  (the usual Mac case).
 
-The peer column lights up when [claude-peers] is on the network; without it,
-that column is simply empty and everything else works the same.
+The peer column is hidden outright when [claude-peers] is not on the
+network — not blank, absent — and everything else works the same.
 
 ## Development
 
