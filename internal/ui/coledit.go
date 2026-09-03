@@ -55,10 +55,10 @@ var allColumnIDs = []columnID{
 // ever adjust an existing binding's label/presence for the current state
 // (armed, flex column selected) -- they never introduce a sixth verb.
 type editorKeys struct {
-	move   key.Binding
-	arm    key.Binding
-	hide   key.Binding
-	resize key.Binding
+	move    key.Binding
+	arm     key.Binding
+	hide    key.Binding
+	resize  key.Binding
 	close   key.Binding
 	abandon key.Binding
 	reset   key.Binding
