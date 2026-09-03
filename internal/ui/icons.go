@@ -24,7 +24,7 @@ var (
 	iconDust, iconBandwhich, iconSearch, iconFiles, iconZoxide      Icon
 	iconTelevision, iconStarship, iconFastfetch, iconJq, iconBat    Icon
 	iconGo, iconRust, iconPython, iconNode                          Icon
-	iconMpv, iconImv, iconCava, iconSpotify                         Icon
+	iconMpv, iconImv, iconCava, iconSpotify, iconMusic              Icon
 	iconImpala, iconWiremix, iconBluetui                            Icon
 	iconNeomutt, iconWeechat, iconNewsboat, iconCalcurse, iconAtuin Icon
 	iconShell, iconOther                                            Icon
@@ -74,6 +74,7 @@ func applyTheme(p Palette) {
 	iconImv = Icon{"nf-md-image", glyphU(0xF02E9), p.Magenta}
 	iconCava = Icon{"nf-md-equalizer", glyphU(0xF0EA2), p.Magenta}
 	iconSpotify = Icon{"nf-md-spotify", glyphU(0xF04C7), p.Green}
+	iconMusic = Icon{"nf-fa-music", glyphU(0xF001), p.Magenta} // cliamp, Willy's own player
 
 	iconImpala = Icon{"nf-md-impala", glyphU(0xF05A9), p.Blue}
 	iconWiremix = Icon{"nf-md-wiremix", glyphU(0xF057E), p.Magenta}
@@ -139,6 +140,7 @@ func buildAppIcons() map[string]Icon {
 		"imv":            iconImv,
 		"cava":           iconCava,
 		"spotify_player": iconSpotify, "ncspot": iconSpotify, "spotify-player": iconSpotify,
+		"cliamp": iconMusic,
 
 		"impala":  iconImpala,
 		"wiremix": iconWiremix,

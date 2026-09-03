@@ -35,7 +35,10 @@ type reloadMsg struct {
 // from. Kept overlay-agnostic on purpose -- the editor never touches Model
 // internals directly, the same shape rename/kill already use via
 // doAndReload's Cmd-returns-a-msg pattern.
-type columnsAppliedMsg struct{ columns []columnSetting }
+type columnsAppliedMsg struct {
+	columns    []columnSetting
+	popupWidth int // for @sessui-width; takes effect on the next open
+}
 
 // editorPreviewRows caps how many real session rows the column editor's live
 // preview draws -- enough to read as a table, not a full scroll of the list.
@@ -215,6 +218,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = err
 		} else {
 			m.configErr = nil // a good write replaces whatever failed to parse
+		}
+		// Popup geometry lives in tmux, not config.json: sessui.tmux reads
+		// @sessui-width at open time, before this binary exists.
+		if err := session.SetPopupWidth(msg.popupWidth); err != nil {
+			m.err = err
 		}
 		m.relayout()
 		return m, nil
@@ -412,7 +420,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case key.Matches(msg, appKeys.Columns):
-		m.overlay = newColumnEditor(m.styles, m.columns, m.showPeer, m.usableWidth(), m.editorPreview)
+		m.overlay = newColumnEditor(m.styles, m.columns, m.showPeer, session.PopupWidth(), m.editorPreview)
 		return m, m.overlay.Init()
 	}
 

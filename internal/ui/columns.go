@@ -145,7 +145,9 @@ var columnCatalog = map[columnID]column{
 		},
 	},
 	colWindows: {
-		id: colWindows, label: "win", glyph: glyphWindows, width: 4, minWidth: 3,
+		// 5, not 4: the header is glyph + space + "win" and must not truncate
+		// to "wi"; the data ("3") fits in far less, hence the lower floor.
+		id: colWindows, label: "win", glyph: glyphWindows, width: 5, minWidth: 3,
 		render: func(c cell) string {
 			return c.styles.Muted.Render(strconv.Itoa(c.session.Windows))
 		},

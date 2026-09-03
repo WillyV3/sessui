@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // idsPreview is a stand-in for Model's real preview closure: instead of
@@ -136,12 +137,19 @@ func TestColumnEditor_HideThenShow(t *testing.T) {
 		t.Errorf("hidden column leaked into the preview: %q", preview)
 	}
 
-	e = press(t, e, "space") // same cell, still selected: show it again
+	// Hiding put apps on the shelf with the shelf cursor already on it, so
+	// showing it again is ↓ then the same space -- and it returns to the
+	// slot it came from, never the end.
+	e = press(t, e, "down")
+	if e.row != rowShelf || idOf(e, e.shelfCursor) != colApps {
+		t.Fatalf("↓ after hiding: row %d, shelf cursor on %s; want the shelf with apps selected", e.row, idOf(e, e.shelfCursor))
+	}
+	e = press(t, e, "space")
 	if e.hidden[colApps] {
-		t.Fatal("second space did not show the column again")
+		t.Fatal("space on the shelf did not show the column again")
 	}
 	if idOf(e, 1) != colApps {
-		t.Fatalf("un-hiding moved the column: order[1] = %s, want apps (same gesture, same slot)", idOf(e, 1))
+		t.Fatalf("un-hiding moved the column: order[1] = %s, want apps (same slot it left)", idOf(e, 1))
 	}
 }
 
@@ -410,4 +418,88 @@ func TestColumnEditor_AbandonDiscards(t *testing.T) {
 			t.Errorf("applied order = %v, want apps and active swapped", got)
 		}
 	})
+}
+
+// TestColumnEditor_StripNeverWiderThanPopup pins the bug the shelf exists
+// for: whatever is hidden, the strip lays out the visible columns at the
+// preview's width and is exactly that wide -- never squeezed, never past the
+// popup. Before this, all ten catalog columns shared the strip and status
+// collapsed to a stub while "windows" truncated to "wi".
+func TestColumnEditor_StripNeverWiderThanPopup(t *testing.T) {
+	e := newColumnEditor(testStyles(), defaultColumnSettings(), true, 112, func(tableLayout) string { return "" })
+	for _, hide := range [][]string{{}, {"right", "space"}, {"right", "space", "space"}, {"down", "space", "space", "space"}} {
+		e.reset(defaultColumnSettings())
+		e = press(t, e, hide...)
+		layout := layoutColumns(e.visibleColumns(), e.usable())
+		if w := lipgloss.Width(e.renderStrip(layout)); w != e.usable() {
+			t.Errorf("after %v: strip width = %d, want exactly usable %d", hide, w, e.usable())
+		}
+		for _, line := range strings.Split(e.View(), "\n") {
+			if w := lipgloss.Width(line); w > e.usable() {
+				t.Errorf("after %v: a View line is %d wide, past usable %d: %q", hide, w, e.usable(), line)
+			}
+		}
+	}
+}
+
+// TestColumnEditor_ShelfAddsAColumn is the discovery path: the four catalog
+// columns not in the shipped table start on the shelf; ↓ reaches it, ←/→
+// selects a chip, space shows it -- it appears in the strip and in Result().
+func TestColumnEditor_ShelfAddsAColumn(t *testing.T) {
+	e := newColumnEditor(testStyles(), defaultColumnSettings(), true, 112, func(tableLayout) string { return "" })
+	if e.row != rowStrip {
+		t.Fatalf("opens on row %d, want the strip", e.row)
+	}
+	e = press(t, e, "down") // shelf
+	if e.row != rowShelf || idOf(e, e.shelfCursor) != colAge {
+		t.Fatalf("↓ landed on row %d cursor %s, want shelf on age (first hidden)", e.row, idOf(e, e.shelfCursor))
+	}
+	e = press(t, e, "right", "space") // windows -> shown
+	if e.hidden[colWindows] {
+		t.Fatal("space on the shelf did not show the chip")
+	}
+	if e.row != rowShelf {
+		t.Errorf("row after adding = %d, want to stay on the shelf to add more", e.row)
+	}
+	var ids []columnID
+	for _, s := range e.Result() {
+		ids = append(ids, s.ID)
+	}
+	if ids[len(ids)-1] != colWindows {
+		t.Errorf("Result() = %v, want windows appended after the shipped six", ids)
+	}
+	if !strings.Contains(e.View(), "win") {
+		t.Error("View() does not show the added column in the strip")
+	}
+}
+
+// TestColumnEditor_PopupWidth: the width row adjusts in steps, clamps, and
+// rides out on the apply msg; ctrl+r puts it back to the default.
+func TestColumnEditor_PopupWidth(t *testing.T) {
+	e := newColumnEditor(testStyles(), defaultColumnSettings(), true, 112, func(tableLayout) string { return "" })
+	e = press(t, e, "down", "down") // strip -> shelf -> width
+	if e.row != rowWidth {
+		t.Fatalf("row = %d, want the width row", e.row)
+	}
+	e = press(t, e, "+", "+", "-", "right")
+	if e.popupWidth != 112+2*popupWidthStep {
+		t.Errorf("popupWidth = %d, want %d (+,+,-,right = +2 steps)", e.popupWidth, 112+2*popupWidthStep)
+	}
+	for i := 0; i < 100; i++ {
+		e = press(t, e, "+")
+	}
+	if e.popupWidth != popupWidthMax {
+		t.Errorf("popupWidth after 100 '+' = %d, want clamped to %d", e.popupWidth, popupWidthMax)
+	}
+	e = press(t, e, "esc")
+	_, apply := e.result()
+	if got := apply().(columnsAppliedMsg).popupWidth; got != popupWidthMax {
+		t.Errorf("applied popupWidth = %d, want %d", got, popupWidthMax)
+	}
+
+	e = newColumnEditor(testStyles(), defaultColumnSettings(), true, 140, func(tableLayout) string { return "" })
+	e = press(t, e, "ctrl+r")
+	if e.popupWidth != popupWidthDefault {
+		t.Errorf("ctrl+r left popupWidth at %d, want %d", e.popupWidth, popupWidthDefault)
+	}
 }

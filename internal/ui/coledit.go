@@ -7,27 +7,43 @@ package ui
 // live underneath every edit. Nothing here is a mockup of the table; it is
 // the table, mid-edit.
 //
-// Five verbs, same meaning in every state:
-//   ←/→   move the selection, or (armed) swap the selection with a neighbour
-//   enter arm the selection for moving / drop it back down
-//   space hide or show the selected column
-//   +/-   resize the selected column (no-op on the flex column, status)
-//   esc   apply and close -- or, while armed, just disarm
+// Three rows, one cursor axis each:
+//
+//	strip   the visible columns, laid out EXACTLY as the preview below them
+//	shelf   the hidden columns as compact chips -- what you can add
+//	width   the popup's width, applied on the next open
+//
+// ↑/↓ picks the row. Within a row the same verbs always mean the same thing:
+//
+//	←/→   move the selection, or (armed, strip only) swap with a neighbour
+//	enter arm the selected column for moving / drop it back (strip only)
+//	space hide the selected column (strip) / show it (shelf)
+//	+/-   resize the selected column (strip), or adjust the width (width row)
+//	esc   apply and close -- or, while armed, just disarm
+//
 // Two non-verbs: ctrl+z abandons (close, apply nothing), ctrl+r resets to
 // the shipped defaults in place.
 //
-// Arm-to-move (rather than, say, a drag or a persistent "reorder mode") was
-// chosen because left/right already means "move the cursor" -- arming is
-// the one bit of state needed to make the SAME two keys also mean "move the
-// column," without stealing up/down for a job they don't need (see
-// GOTCHAS #5: this app doesn't do second meanings on an axis lightly).
+// Why the strip never contains a hidden column: an earlier version laid out
+// all ten catalog columns in the strip at their real widths. That squeezed
+// the flex column to a stub, truncated "windows" to "wi", and -- because the
+// preview laid out only the visible six -- nothing in the strip sat over the
+// data it labelled. The strip and the preview now lay out the same column
+// slice at the same width, so alignment holds by construction and the strip
+// can never be wider than the popup. Hidden columns live on the shelf as
+// chips at their natural width, which is how a user discovers and adds
+// age/windows/attached/machine.
 //
-// There is no confirm step on purpose: this editor is opened ~120x/hour by
-// a tool built to be fast, and esc applying immediately keeps it that way.
-// Abandon exists because the owner asked for it after using it -- a way to
-// throw an edit away without a confirm on the way in.
+// Arm-to-move (rather than a drag or a persistent "reorder mode") was chosen
+// because left/right already means "move the cursor" -- arming is the one
+// bit of state needed to make the SAME two keys also mean "move the column."
+//
+// There is no confirm step on purpose: this editor is opened ~120x/hour by a
+// tool built to be fast, and esc applying immediately keeps it that way.
+// Abandon exists because the owner asked for it after using it.
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/help"
@@ -44,19 +60,39 @@ const glyphArmed = 0x25C6 // ◆
 
 // allColumnIDs is every column the catalog knows, in the order columns.go
 // declares them. columnCatalog is a map (unordered), so this is the
-// editor's own stable "everything" list -- the strip's starting shelf of
-// catalog columns not yet in the user's settings (age, windows, attached,
-// machine) comes from walking this after the user's configured ones.
+// editor's own stable "everything" list -- the shelf's starting contents
+// (age, windows, attached, machine) come from walking this after the
+// user's configured ones.
 var allColumnIDs = []columnID{
 	colSession, colApps, colActive, colCWD, colPeer, colStatus,
 	colAge, colWindows, colAttached, colMachine,
 }
 
+// Popup width bounds and step. The floor is what the shipped six columns
+// need before status hits its minWidth; the ceiling is a sanity stop, not a
+// real limit. Steps of four keep the count of keypresses sane.
+const (
+	popupWidthDefault = 112
+	popupWidthMin     = 80
+	popupWidthMax     = 240
+	popupWidthStep    = 4
+)
+
+// editorRow is which of the three rows the cursor is on.
+type editorRow int
+
+const (
+	rowStrip editorRow = iota
+	rowShelf
+	rowWidth
+)
+
 // editorKeys is the editor's whole vocabulary, held as one key.Binding set
-// so bubbles/help renders straight off it. ShortHelp/FullHelp (below) only
-// ever adjust an existing binding's label/presence for the current state
-// (armed, flex column selected) -- they never introduce a sixth verb.
+// so bubbles/help renders straight off it. ShortHelp (below) only ever
+// adjusts an existing binding's label/presence for the current row and
+// state -- it never introduces a new verb.
 type editorKeys struct {
+	rows    key.Binding
 	move    key.Binding
 	arm     key.Binding
 	hide    key.Binding
@@ -68,16 +104,16 @@ type editorKeys struct {
 
 func newEditorKeys() editorKeys {
 	return editorKeys{
+		rows:   key.NewBinding(key.WithKeys("up", "down"), key.WithHelp("↑↓", "row")),
 		move:   key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "select")),
 		arm:    key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "arm to move")),
-		hide:   key.NewBinding(key.WithKeys(" "), key.WithHelp("space", "hide/show")),
+		hide:   key.NewBinding(key.WithKeys(" "), key.WithHelp("space", "hide")),
 		resize: key.NewBinding(key.WithKeys("+", "=", "-", "_"), key.WithHelp("+/-", "resize")),
 		close:  key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "apply & close")),
-		// abandon closes WITHOUT applying: the table goes back to exactly what
-		// it was when the editor opened, and nothing is written. ctrl+z reads
-		// as "undo", which is what the user means by it; ctrl+q/ctrl+s are
-		// terminal flow-control on some setups and ctrl+x already means kill
-		// in the list -- the same letter must not mean two things.
+		// abandon closes WITHOUT applying. ctrl+z reads as "undo", which is
+		// what the user means by it; ctrl+q/ctrl+s are terminal flow-control
+		// on some setups and ctrl+x already means kill in the list -- the
+		// same letter must not mean two things.
 		abandon: key.NewBinding(key.WithKeys("ctrl+z"), key.WithHelp("ctrl+z", "abandon")),
 		reset:   key.NewBinding(key.WithKeys("ctrl+r"), key.WithHelp("ctrl+r", "reset")),
 	}
@@ -85,62 +121,77 @@ func newEditorKeys() editorKeys {
 
 // columnEditor is the WYSIWYG column editor overlay (see the package doc
 // above). It owns the keyboard while it's up and reports itself done via
-// result() (the pull-based overlayResult contract in overlay.go). Two ways
-// out: esc applies, ctrl+z abandons -- see result().
+// result() (the pull-based overlayResult contract in overlay.go).
 type columnEditor struct {
 	styles   Styles
 	showPeer bool
-	width    int
 	preview  func(tableLayout) string
 	keys     editorKeys
 	help     help.Model
 
-	// order is EVERY catalog column, visible and hidden, in strip order --
-	// the unit arm+swap moves. reset() seeds it as the configured columns
-	// followed by whatever the catalog has left, hidden; nothing thereafter
-	// keeps visible columns contiguous automatically -- if the user swaps a
-	// hidden column into the middle of the visible run, that's them
-	// deliberately inserting it, and the strip and preview will show
-	// exactly that (see stripColumns/visibleColumns).
+	// order is EVERY catalog column, visible and hidden, in one stable
+	// sequence. Hiding does not move a column; it flags it, so hide-then-show
+	// puts it back exactly where it was. The strip is order's visible
+	// entries, the shelf its hidden ones.
 	order  []columnID
 	hidden map[columnID]bool
 	// widths is a per-column resize override, 0 = catalog default -- the
 	// exact columnSetting.Width contract, so Result() is a direct read.
 	widths map[columnID]int
 
-	cursor    int  // index into order
-	armed     bool // enter arms the selected column for a swap-move
-	finished  bool // an unarmed esc or ctrl+z was pressed -- see result()
-	abandoned bool // it was ctrl+z: finish with nothing to apply
+	// popupWidth is the tmux popup width the table will get on its next
+	// open. usable() derives the row width the preview lays out against.
+	popupWidth int
+
+	row         editorRow
+	cursor      int  // index into order; on a visible entry while row == rowStrip
+	shelfCursor int  // index into order; on a hidden entry while row == rowShelf
+	armed       bool // enter arms the selected strip column for a swap-move
+	finished    bool // an unarmed esc or ctrl+z was pressed -- see result()
+	abandoned   bool // it was ctrl+z: finish with nothing to apply
 }
 
 // newColumnEditor builds the editor over `current`'s configuration. preview
 // is Model's real renderer (renderHeader + renderRow over live sessions) --
-// see the package doc for why that's the one idea worth stealing from
-// ccstatusline: the preview is production code, not a mockup.
-func newColumnEditor(styles Styles, current []columnSetting, showPeer bool, width int, preview func(tableLayout) string) *columnEditor {
+// the preview is production code, not a mockup. popupWidth is the width the
+// popup was opened at (see session.PopupWidth); the editor lets the user
+// change it for next time.
+func newColumnEditor(styles Styles, current []columnSetting, showPeer bool, popupWidth int, preview func(tableLayout) string) *columnEditor {
 	hp := help.New()
 	// Tint bubbles/help onto the app's own palette instead of its baked-in
 	// greys -- Header and Help are already the right colours for "key" and
-	// "de-emphasised description," so this is a straight reuse, not a new
-	// style (see GOTCHAS #3 on not inventing text colours).
+	// "de-emphasised description," so this is a straight reuse.
 	hp.Styles.ShortKey = styles.Header
 	hp.Styles.ShortDesc = styles.Help
 	hp.Styles.ShortSeparator = styles.Help
 
-	e := &columnEditor{styles: styles, showPeer: showPeer, width: width, preview: preview, keys: newEditorKeys(), help: hp}
+	e := &columnEditor{styles: styles, showPeer: showPeer, preview: preview, keys: newEditorKeys(), help: hp, popupWidth: clampPopupWidth(popupWidth)}
 	e.reset(current)
 	return e
 }
 
-// reset rebuilds the strip from settings: the configured columns in their
+func clampPopupWidth(w int) int {
+	if w <= 0 {
+		return popupWidthDefault
+	}
+	return min(max(w, popupWidthMin), popupWidthMax)
+}
+
+// usable is the row width the table has inside the popup at popupWidth:
+// the popup minus appStyle's Padding(1,2). The same arithmetic Model.listSize
+// does for the live list, so the preview here is what the next open shows.
+func (e *columnEditor) usable() int {
+	h, _ := appStyle.GetFrameSize()
+	return e.popupWidth - h
+}
+
+// reset rebuilds the editor from settings: the configured columns in their
 // order first, then every catalog column the settings don't mention,
-// appended hidden -- which is how a user discovers age/windows/attached/
-// machine (see the deliverable). ctrl+r calls this with
-// defaultColumnSettings() to restore the shipped table. The peer column is
-// dropped outright (not even offered hidden) when showPeer is false, same
-// as the live table -- toggling a column that resolveColumns would strip
-// back out at render time would be a lie the editor tells the user.
+// appended hidden (the shelf). ctrl+r calls this with defaultColumnSettings()
+// to restore the shipped table. The peer column is dropped outright (not even
+// shelved) when showPeer is false, same as the live table -- offering a
+// column that resolveColumns would strip back out at render time would be a
+// lie the editor tells the user.
 func (e *columnEditor) reset(settings []columnSetting) {
 	seen := make(map[columnID]bool, len(allColumnIDs))
 	order := make([]columnID, 0, len(allColumnIDs))
@@ -169,7 +220,9 @@ func (e *columnEditor) reset(settings []columnSetting) {
 	}
 
 	e.order, e.hidden, e.widths = order, hidden, widths
-	e.cursor, e.armed = 0, false
+	e.row, e.armed = rowStrip, false
+	e.cursor = e.nearest(0, false)
+	e.shelfCursor = e.nearest(0, true)
 }
 
 // resolvedColumn is id's catalog column at its current effective width: the
@@ -184,22 +237,9 @@ func (e *columnEditor) resolvedColumn(id columnID) column {
 	return c
 }
 
-// stripColumns is every column in the strip, in order, at its resolved
-// width -- what the editable header band lays out against.
-func (e *columnEditor) stripColumns() []column {
-	cols := make([]column, len(e.order))
-	for i, id := range e.order {
-		cols[i] = e.resolvedColumn(id)
-	}
-	return cols
-}
-
-// visibleColumns is the subset of the strip that isn't hidden, in order --
-// what the live preview lays out against. Because it's built by filtering
-// the SAME order the strip walks, a visible column's position among other
-// visible columns always matches between the two views (a hidden column
-// contributes no width to either), which is what lets the strip band read
-// as a header directly above the preview it's the header of.
+// visibleColumns is the strip AND the preview's column slice: order's
+// visible entries, resolved. Both views lay out this one slice at usable(),
+// which is what makes the strip a true header for the preview.
 func (e *columnEditor) visibleColumns() []column {
 	cols := make([]column, 0, len(e.order))
 	for _, id := range e.order {
@@ -224,26 +264,112 @@ func (e *columnEditor) Result() []columnSetting {
 	return out
 }
 
-// move slides the cursor across strip cells, or -- while armed -- swaps the
-// armed column with its neighbour and follows it, so the arm stays on the
-// piece being moved rather than the slot it used to occupy. Same two keys,
-// different meaning, entirely driven by armed: the vocabulary never grows.
-func (e *columnEditor) move(delta int) {
-	next := e.cursor + delta
-	if next < 0 || next >= len(e.order) {
-		return
+// nearest returns the index of the entry at or after from (searching
+// forward, then backward) whose hidden flag matches want; -1 if none. It
+// is how each row's cursor stays on an entry that belongs to that row.
+func (e *columnEditor) nearest(from int, want bool) int {
+	for i := from; i < len(e.order); i++ {
+		if e.hidden[e.order[i]] == want {
+			return i
+		}
 	}
-	if e.armed {
-		e.order[e.cursor], e.order[next] = e.order[next], e.order[e.cursor]
+	for i := min(from, len(e.order)-1); i >= 0; i-- {
+		if e.hidden[e.order[i]] == want {
+			return i
+		}
 	}
-	e.cursor = next
+	return -1
 }
 
-// resize grows or shrinks the selected column by one cell, floored at its
-// minWidth. The flex column (status) has nothing fixed to resize -- it
-// already takes whatever the fixed columns leave -- so this is a no-op for
-// it, and selectionIsFlex/ShortHelp drop the hint while it's selected.
+// step returns the next entry in the row's direction that belongs to the
+// row (visible for the strip, hidden for the shelf), or -1 at the edge.
+func (e *columnEditor) step(from, delta int, want bool) int {
+	for i := from + delta; i >= 0 && i < len(e.order); i += delta {
+		if e.hidden[e.order[i]] == want {
+			return i
+		}
+	}
+	return -1
+}
+
+// move slides the row's cursor, or -- armed, on the strip -- swaps the armed
+// column with its nearest visible neighbour and follows it, so the arm stays
+// on the piece being moved rather than the slot it used to occupy. Hidden
+// entries between them are skipped over, not disturbed. On the width row
+// ←/→ is the same as +/-: one control, both natural keys.
+func (e *columnEditor) move(delta int) {
+	switch e.row {
+	case rowStrip:
+		next := e.step(e.cursor, delta, false)
+		if next < 0 {
+			return
+		}
+		if e.armed {
+			e.order[e.cursor], e.order[next] = e.order[next], e.order[e.cursor]
+		}
+		e.cursor = next
+	case rowShelf:
+		if next := e.step(e.shelfCursor, delta, true); next >= 0 {
+			e.shelfCursor = next
+		}
+	case rowWidth:
+		e.adjustWidth(delta)
+	}
+}
+
+// changeRow moves ↑/↓ between strip, shelf and width. Arming is a strip
+// state, so leaving the strip drops it. The shelf is skipped when it is
+// empty -- there is nothing to select there -- so ↓ from a full strip goes
+// straight to the width row.
+func (e *columnEditor) changeRow(delta int) {
+	next := e.row + editorRow(delta)
+	if next == rowShelf && e.shelfCursor < 0 {
+		next += editorRow(delta)
+	}
+	if next < rowStrip || next > rowWidth {
+		return
+	}
+	e.row, e.armed = next, false
+}
+
+// toggle is space: on the strip it hides the selected column (which then
+// appears on the shelf, in place); on the shelf it shows the selected chip
+// (which reappears in the strip at its original position). Each row's cursor
+// is then re-seated on an entry that still belongs to it.
+func (e *columnEditor) toggle() {
+	switch e.row {
+	case rowStrip:
+		if e.cursor < 0 {
+			return
+		}
+		id := e.order[e.cursor]
+		e.hidden[id] = true
+		e.armed = false
+		e.shelfCursor = e.cursor
+		e.cursor = e.nearest(e.cursor, false)
+	case rowShelf:
+		if e.shelfCursor < 0 {
+			return
+		}
+		id := e.order[e.shelfCursor]
+		e.hidden[id] = false
+		e.cursor = e.shelfCursor
+		e.shelfCursor = e.nearest(e.shelfCursor, true)
+	}
+}
+
+// resize grows or shrinks the selected strip column by one cell, floored at
+// its minWidth. The flex column (status) has nothing fixed to resize -- it
+// already takes whatever the fixed columns leave -- so it is a no-op there
+// and ShortHelp drops the hint. On the width row, +/- adjust the popup.
 func (e *columnEditor) resize(delta int) {
+	if e.row == rowWidth {
+		e.adjustWidth(delta)
+		return
+	}
+	if e.row != rowStrip || e.cursor < 0 {
+		return
+	}
 	id := e.order[e.cursor]
 	col := columnCatalog[id]
 	if col.width == 0 {
@@ -260,8 +386,12 @@ func (e *columnEditor) resize(delta int) {
 	e.widths[id] = next
 }
 
+func (e *columnEditor) adjustWidth(delta int) {
+	e.popupWidth = clampPopupWidth(e.popupWidth + delta*popupWidthStep)
+}
+
 func (e *columnEditor) selectionIsFlex() bool {
-	if e.cursor < 0 || e.cursor >= len(e.order) {
+	if e.row != rowStrip || e.cursor < 0 {
 		return false
 	}
 	return columnCatalog[e.order[e.cursor]].width == 0
@@ -275,21 +405,27 @@ func (e *columnEditor) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return e, nil
 	}
 	switch km.String() {
+	case "up":
+		e.changeRow(-1)
+	case "down":
+		e.changeRow(1)
 	case "left":
 		e.move(-1)
 	case "right":
 		e.move(1)
 	case "enter":
-		e.armed = !e.armed
+		if e.row == rowStrip && e.cursor >= 0 {
+			e.armed = !e.armed
+		}
 	case " ":
-		id := e.order[e.cursor]
-		e.hidden[id] = !e.hidden[id]
+		e.toggle()
 	case "+", "=":
 		e.resize(1)
 	case "-", "_":
 		e.resize(-1)
 	case "ctrl+r":
 		e.reset(defaultColumnSettings())
+		e.popupWidth = popupWidthDefault
 	case "ctrl+z":
 		e.finished, e.abandoned = true, true
 	case "esc":
@@ -305,10 +441,10 @@ func (e *columnEditor) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // result satisfies overlay.go's pull-based overlayResult contract. The
 // editor is finished after an unarmed esc or a ctrl+z (never by ctrl+r,
 // which resets in place without closing). esc's apply Cmd captures the
-// current Result() into a columnsAppliedMsg for Model to persist and
-// relayout from; ctrl+z finishes with a nil apply, so Model drops the
-// overlay and nothing else happens -- the list was never re-laid-out while
-// the editor was open, so "abandon" needs no undo, just no apply.
+// current Result() and popup width into a columnsAppliedMsg for Model to
+// persist and relayout from; ctrl+z finishes with a nil apply, so Model
+// drops the overlay and nothing else happens -- the list was never
+// re-laid-out while the editor was open, so "abandon" needs no undo.
 func (e *columnEditor) result() (finished bool, apply tea.Cmd) {
 	if !e.finished {
 		return false, nil
@@ -316,23 +452,33 @@ func (e *columnEditor) result() (finished bool, apply tea.Cmd) {
 	if e.abandoned {
 		return true, nil
 	}
-	settings := e.Result()
-	return true, func() tea.Msg { return columnsAppliedMsg{columns: settings} }
+	settings, width := e.Result(), e.popupWidth
+	return true, func() tea.Msg { return columnsAppliedMsg{columns: settings, popupWidth: width} }
 }
 
-// ShortHelp/FullHelp make columnEditor itself a help.KeyMap: the SAME five
-// bindings every time, their labels (and, for resize, their presence)
-// adjusted for the live state -- never a sixth verb, never a hidden one.
+// ShortHelp/FullHelp make columnEditor itself a help.KeyMap: the same
+// bindings, their labels (and presence) adjusted for the current row and
+// state -- never a new verb, never a hidden one.
 func (e *columnEditor) ShortHelp() []key.Binding {
-	move, arm, close := e.keys.move, e.keys.arm, e.keys.close
-	if e.armed {
-		move.SetHelp("←/→", "swap")
-		arm.SetHelp("enter", "drop")
-		close.SetHelp("esc", "disarm")
-	}
-	bindings := []key.Binding{move, arm, e.keys.hide}
-	if !e.selectionIsFlex() {
-		bindings = append(bindings, e.keys.resize)
+	rows, move, arm, hide, resize, close := e.keys.rows, e.keys.move, e.keys.arm, e.keys.hide, e.keys.resize, e.keys.close
+	var bindings []key.Binding
+	switch e.row {
+	case rowStrip:
+		if e.armed {
+			move.SetHelp("←/→", "swap")
+			arm.SetHelp("enter", "drop")
+			close.SetHelp("esc", "disarm")
+		}
+		bindings = []key.Binding{rows, move, arm, hide}
+		if !e.selectionIsFlex() {
+			bindings = append(bindings, resize)
+		}
+	case rowShelf:
+		hide.SetHelp("space", "add")
+		bindings = []key.Binding{rows, move, hide}
+	case rowWidth:
+		resize.SetHelp("+/-", "adjust")
+		bindings = []key.Binding{rows, resize}
 	}
 	return append(bindings, close, e.keys.abandon, e.keys.reset)
 }
@@ -363,9 +509,9 @@ func stripLabel(col column, armed bool) string {
 // highlightCell re-applies the selection background after the cell's own
 // reset -- the exact trick Styles.selectRow uses for a whole row (GOTCHAS
 // #9: a plain Background() dies at the content's first \x1b[0m), scoped to
-// one header cell. Reuses styles.selectedBG itself (the same background a
-// selected ROW gets) rather than inventing a second highlight colour, so the
-// selected header cell and the selected row read as the same gesture.
+// one cell. Reuses styles.selectedBG itself (the same background a selected
+// ROW gets) rather than inventing a second highlight colour, so the selected
+// cell and the selected row read as the same gesture.
 func highlightCell(bg, content string) string {
 	if bg == "" {
 		return content
@@ -373,18 +519,14 @@ func highlightCell(bg, content string) string {
 	return bg + strings.ReplaceAll(content, "\x1b[0m", "\x1b[0m"+bg) + "\x1b[0m"
 }
 
-// stripCell renders one strip header cell. Hidden columns drop to
-// Muted+Strikethrough (Faint text, never the theme's muted slot -- GOTCHAS
-// #3); armed recolours to Mail's warning yellow so "grabbed" doesn't rely on
-// the reader having learned the selection background first; the selected
-// cell (armed or not) gets highlightCell's background.
-func stripCell(styles Styles, col column, width int, hidden, selected, armed bool) string {
+// stripCell renders one strip header cell. Armed recolours to Mail's yellow
+// so "grabbed" doesn't rely on the reader having learned the selection
+// background first; the selected cell (armed or not) gets highlightCell's
+// background.
+func stripCell(styles Styles, col column, width int, selected, armed bool) string {
 	style := styles.Header
-	switch {
-	case armed:
+	if armed {
 		style = styles.Mail.Bold(true)
-	case hidden:
-		style = styles.Muted.Strikethrough(true)
 	}
 	rendered := fixedCol(width).Render(style.Render(stripLabel(col, armed)))
 	if selected {
@@ -393,24 +535,87 @@ func stripCell(styles Styles, col column, width int, hidden, selected, armed boo
 	return rendered
 }
 
-func (e *columnEditor) renderStrip() string {
-	layout := layoutColumns(e.stripColumns(), e.width)
+// renderStrip lays the visible columns out at the preview's own layout, so
+// every cell sits over the data it labels and the strip is exactly as wide
+// as the table -- never wider than the popup.
+func (e *columnEditor) renderStrip(layout tableLayout) string {
+	selected := e.row == rowStrip
 	cells := make([]string, 0, 2*len(layout.columns))
 	cells = append(cells, fixedCol(cursorWidth).Render(""))
-	for i, col := range layout.columns {
-		if i > 0 {
+	vi := 0
+	for i, id := range e.order {
+		if e.hidden[id] {
+			continue
+		}
+		if vi > 0 {
 			cells = append(cells, " ")
 		}
-		id := e.order[i]
-		cells = append(cells, stripCell(e.styles, col, layout.widths[i], e.hidden[id], i == e.cursor, e.armed && i == e.cursor))
+		isSel := selected && i == e.cursor
+		cells = append(cells, stripCell(e.styles, layout.columns[vi], layout.widths[vi], isSel, isSel && e.armed))
+		vi++
 	}
 	return lipgloss.JoinHorizontal(lipgloss.Top, cells...)
 }
 
+// captionWidth is the label gutter the two control rows share, so "add" and
+// "width" form a left edge under the strip and the eye reads three rows as
+// one instrument. The strip itself has no caption: its cells must sit
+// exactly over the preview's columns, so nothing may shift it.
+const captionWidth = 8
+
+// controlRow composes one full-width control row: a faint caption in the
+// gutter, the control itself, and a hint anchored to the right edge -- so
+// the row uses the width it is given rather than trailing off after the
+// control (the page is 108+ wide; a short left-aligned line reads as
+// abandoned).
+func (e *columnEditor) controlRow(caption, control, hint string, width int) string {
+	left := fixedCol(cursorWidth).Render("") + fixedCol(captionWidth).Render(e.styles.Muted.Render(caption)) + control
+	return padRight(left, e.styles.Muted.Render(hint), width)
+}
+
+// renderShelf is the hidden columns as chips: "+ glyph label", each at its
+// natural width, faint, with the selected one highlighted when the shelf has
+// the cursor. Compact by design -- a chip is an offer, not a column.
+func (e *columnEditor) renderShelf(width int) string {
+	selected := e.row == rowShelf
+	var chips []string
+	for i, id := range e.order {
+		if !e.hidden[id] {
+			continue
+		}
+		text := "+ " + stripLabel(columnCatalog[id], false)
+		if selected && i == e.shelfCursor {
+			chips = append(chips, highlightCell(e.styles.selectedBG, e.styles.Header.Render(text)))
+		} else {
+			chips = append(chips, e.styles.Muted.Render(text))
+		}
+	}
+	if len(chips) == 0 {
+		return e.controlRow("add", e.styles.Muted.Render("every column is shown"), "", width)
+	}
+	hint := fmt.Sprintf("%d hidden", len(chips))
+	return e.controlRow("add", strings.Join(chips, "   "), hint, width)
+}
+
+// renderWidthRow is the popup width control. Its hint says when the value
+// takes effect, because the popup you are looking at cannot resize itself.
+func (e *columnEditor) renderWidthRow(width int) string {
+	value := fmt.Sprintf("%d", e.popupWidth)
+	if e.row == rowWidth {
+		value = highlightCell(e.styles.selectedBG, e.styles.Header.Render(" "+value+" "))
+	} else {
+		value = e.styles.Muted.Render(value)
+	}
+	hint := "applies on next open"
+	if e.popupWidth != popupWidthDefault {
+		hint = fmt.Sprintf("default %d · applies on next open", popupWidthDefault)
+	}
+	return e.controlRow("width", value, hint, width)
+}
+
 // padRight lays left flush-left and right flush-right on one line at width,
-// dropping right if there's no room for it -- narrower than the title alone
-// is not a case this app's popup width ever hits, but it must degrade
-// instead of panicking (a negative strings.Repeat count panics).
+// dropping right if there's no room for it -- it must degrade instead of
+// panicking (a negative strings.Repeat count panics).
 func padRight(left, right string, width int) string {
 	gap := width - lipgloss.Width(left) - lipgloss.Width(right)
 	if gap < 1 {
@@ -420,14 +625,21 @@ func padRight(left, right string, width int) string {
 }
 
 // View renders the editor's whole screen: a title band (the contextual help
-// line right-aligned to width), the editable header strip, a blank line,
-// then the live preview -- see the package doc and newColumnEditor.
+// line right-aligned), the strip, the shelf, the width row, a blank line,
+// then the live preview at the width the popup will have next time.
 func (e *columnEditor) View() string {
+	width := e.usable()
 	title := e.styles.Header.Render("edit columns")
-	e.help.Width = max(e.width-lipgloss.Width(title)-1, 0)
-	band := padRight(title, e.help.View(e), e.width)
+	e.help.Width = max(width-lipgloss.Width(title)-1, 0)
+	band := padRight(title, e.help.View(e), width)
 
-	preview := e.preview(layoutColumns(e.visibleColumns(), e.width))
-
-	return strings.Join([]string{band, e.renderStrip(), "", preview}, "\n")
+	layout := layoutColumns(e.visibleColumns(), width)
+	return lipgloss.JoinVertical(lipgloss.Left,
+		band,
+		e.renderStrip(layout),
+		e.renderShelf(width),
+		e.renderWidthRow(width),
+		"",
+		e.preview(layout),
+	)
 }

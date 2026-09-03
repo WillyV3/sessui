@@ -228,6 +228,32 @@ func Kill(name string) error {
 	return exec.Command("tmux", "kill-session", "-t", name).Run()
 }
 
+// popupWidthOption is the tmux user option sessui.tmux reads at open time to
+// size the popup. It lives in tmux rather than sessui's own config because
+// tmux needs it before this binary runs.
+const popupWidthOption = "@sessui-width"
+
+// PopupWidth is the configured popup width, or 0 when unset or unreadable --
+// the caller applies the default, so a missing option and a missing tmux
+// look the same.
+func PopupWidth() int {
+	out, err := exec.Command("tmux", "show-option", "-gqv", popupWidthOption).Output()
+	if err != nil {
+		return 0
+	}
+	w, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil {
+		return 0
+	}
+	return w
+}
+
+// SetPopupWidth stores the width for the next open. It writes the global
+// option, which is what sessui.tmux's run-shell substitution reads.
+func SetPopupWidth(w int) error {
+	return exec.Command("tmux", "set-option", "-g", popupWidthOption, strconv.Itoa(w)).Run()
+}
+
 // Build is the pure parse-and-combine step, split out from List so it can
 // be exercised with table tests against captured tmux/cp3 output. Alongside
 // the sessions it returns each agent session's pane id (name -> pane_id),

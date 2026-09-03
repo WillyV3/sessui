@@ -101,6 +101,7 @@ var asciiGlyphs = map[rune]string{
 	0xF02E9: "im",  // imv / image
 	0xF0EA2: "eq",  // cava / equalizer
 	0xF04C7: "sp",  // spotify
+	0xF001:  "mu",  // cliamp / music
 	0xF05A9: "wi",  // impala / wifi
 	0xF057E: "au",  // wiremix / audio
 	0xF00AF: "bt",  // bluetooth
