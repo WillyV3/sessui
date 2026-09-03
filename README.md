@@ -26,9 +26,19 @@ With [TPM](https://github.com/tmux-plugins/tpm), add to `~/.config/tmux/tmux.con
 set -g @plugin 'WillyV3/sessui'
 ```
 
-Then `prefix + I` to fetch and build it. **Building needs [Go](https://go.dev)
-on your PATH** — the plugin compiles the binary on install (and rebuilds it on
-`prefix + U`).
+Then `prefix + I` to fetch and build it. Two requirements, both checked at
+install and reported in the tmux status line if missing:
+
+- **tmux 3.8+** (`tmux -V`). Older tmux opens the popup but never redraws it
+  live — no spinners, no counters. Homebrew's tmux is current; a distro tmux
+  may not be.
+- **[Go](https://go.dev) on the PATH of the shell tmux was started from.**
+  Any Go from 1.21 up: `go build` fetches the exact toolchain the module asks
+  for on its own (Go's default `GOTOOLCHAIN=auto`). "Go is installed but
+  `prefix + I` says it isn't" is almost always a PATH set in a shell rc that
+  tmux's parent shell never sourced.
+
+The plugin compiles the binary on install and rebuilds it on `prefix + U`.
 
 Not using TPM? Clone it and build:
 
@@ -181,7 +191,8 @@ also dispatches the keys, so it cannot drift from what the keys do.
 - **tmux 3.8+** — the live-updating popup (spinners, scrolling, recency
   counters) relies on the popup-redraw fix in 3.8; on older tmux the popup
   paints once and won't animate.
-- **Go** — to build the binary (install and update only).
+- **Go 1.21+** — to build the binary (install and update only); it fetches
+  the module's own toolchain version automatically.
 - A **Nerd Font** in your terminal for the app / column icons — or set
   `"icons": "ascii"` in the [config file](#config-file) if you don't have one
   (the usual Mac case).

@@ -7,8 +7,17 @@ import (
 	"github.com/willyv3/sessui/internal/session"
 )
 
+// withMedia pins the omarchy-shell probe for a test and restores it after.
+func withMedia(t *testing.T, available bool) {
+	t.Helper()
+	was := mediaAvailable
+	mediaAvailable = available
+	t.Cleanup(func() { mediaAvailable = was })
+}
+
 func TestResolveWidgets(t *testing.T) {
 	t.Run("every catalog name resolves", func(t *testing.T) {
+		withMedia(t, true)
 		var settings []widgetSetting
 		for _, n := range widgetNames() {
 			settings = append(settings, widgetSetting{Name: n, Args: map[string]string{"cmd": "true"}})
@@ -29,6 +38,17 @@ func TestResolveWidgets(t *testing.T) {
 		}
 		if len(ws) != 2 {
 			t.Errorf("got %d widgets, want the 2 known ones", len(ws))
+		}
+	})
+
+	t.Run("a box without omarchy-shell gets no now-playing widget and no error", func(t *testing.T) {
+		withMedia(t, false)
+		ws, err := resolveWidgets(defaultHeaderWidgets())
+		if err != nil {
+			t.Fatalf("resolveWidgets(defaults) on a Mac: %v", err)
+		}
+		if len(ws) != 1 || ws[0].name != "attention" {
+			t.Errorf("widgets on a Mac = %v, want attention alone (^w must not land on a dead transport)", ws)
 		}
 	})
 

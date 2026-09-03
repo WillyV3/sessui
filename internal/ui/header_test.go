@@ -170,22 +170,26 @@ func TestRenderHeaderLine_OneLineAtEveryFocus(t *testing.T) {
 // TestRenderHeaderLine_FocusedWidgetExpands: focus swaps the widget's icon
 // for its expanded form; the others stay collapsed beside it.
 func TestRenderHeaderLine_FocusedWidgetExpands(t *testing.T) {
-	widgets, err := resolveWidgets([]widgetSetting{{Name: "attention"}, {Name: "host"}})
-	if err != nil {
-		t.Fatalf("resolveWidgets: %v", err)
+	// A fixed host name, not the machine's: a CI runner called
+	// "sat12-…" contained the session name "sa" and failed this on macOS.
+	widgets := []namedWidget{
+		{name: "attention", widget: attentionWidget{}},
+		{name: "host", widget: hostWidget{name: "box"}},
 	}
-	st := widgetState{sessions: attentionFixture(3, 1, 0), total: 3, shown: 3, styles: testStyles()}
+	sessions := attentionFixture(3, 1, 0)
+	sessions[0].Name = "ringing"
+	st := widgetState{sessions: sessions, total: 3, shown: 3, styles: testStyles()}
 
 	collapsed := renderHeaderLine(st, defaultUsableWidth, widgets, -1)
-	if !strings.Contains(collapsed, glyphU(glyphNeedsYou)+" 1") || strings.Contains(collapsed, "sa") {
+	if !strings.Contains(collapsed, glyphU(glyphNeedsYou)+" 1") || strings.Contains(collapsed, "ringing") {
 		t.Errorf("collapsed: want the pill, not the session name: %q", collapsed)
 	}
 
 	expanded := renderHeaderLine(st, defaultUsableWidth, widgets, 0)
-	if !strings.Contains(expanded, "sa") {
-		t.Errorf("focus 0: want the attention widget to name session sa: %q", expanded)
+	if !strings.Contains(expanded, "ringing") {
+		t.Errorf("focus 0: want the attention widget to name the ringing session: %q", expanded)
 	}
-	if !strings.Contains(expanded, hostname()) {
+	if !strings.Contains(expanded, "box") {
 		t.Errorf("focus 0: the unfocused host widget must still show its icon: %q", expanded)
 	}
 }

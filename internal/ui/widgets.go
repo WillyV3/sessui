@@ -151,6 +151,11 @@ func resolveWidgets(settings []widgetSetting) ([]namedWidget, error) {
 			errs = append(errs, fmt.Sprintf("widget %q: %v", s.Name, err))
 			continue
 		}
+		if w == nil {
+			// Not applicable on this box (no media service on a Mac): not an
+			// error, not a dead widget for ^w to land on -- simply absent.
+			continue
+		}
 		out = append(out, namedWidget{name: s.Name, widget: w})
 	}
 	if len(errs) > 0 {

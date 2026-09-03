@@ -103,8 +103,13 @@ type nowPlayingWidget struct {
 	err       error
 }
 
+// newNowPlayingWidget returns no widget at all where omarchy-shell is absent:
+// a transport with nothing to drive would only give ^w a dead first stop.
 func newNowPlayingWidget(map[string]string) (widget, error) {
-	return &nowPlayingWidget{client: omarchyMedia{}, available: mediaAvailable}, nil
+	if !mediaAvailable {
+		return nil, nil
+	}
+	return &nowPlayingWidget{client: omarchyMedia{}, available: true}, nil
 }
 
 // icon is the note, coloured live while playing and muted while paused;
