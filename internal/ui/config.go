@@ -20,7 +20,17 @@ type Config struct {
 	Columns []columnSetting `json:"columns,omitempty"`
 	// Icons is the glyph set: "nerd" (the default, needs a Nerd Font) or
 	// "ascii" for a terminal without one -- the usual state of a Mac.
-	Icons glyphSet `json:"icons,omitempty"`
+	Icons glyphSet    `json:"icons,omitempty"`
+	Theme ThemeConfig `json:"theme,omitempty"`
+}
+
+// ThemeConfig is how the palette is chosen. A struct rather than a bare
+// string so the role-to-slot mapping the settings UI adds next has a home
+// without reshaping the file.
+type ThemeConfig struct {
+	// Palette is "auto" (Omarchy's theme when present, else dark), or a
+	// pinned built-in: "dark" | "light".
+	Palette paletteSource `json:"palette,omitempty"`
 }
 
 // withDefaults fills anything the file left unset, so callers never branch
@@ -32,6 +42,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.Icons == "" {
 		c.Icons = glyphsNerd
+	}
+	if c.Theme.Palette == "" {
+		c.Theme.Palette = paletteAuto
 	}
 	return c
 }

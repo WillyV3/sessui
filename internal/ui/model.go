@@ -84,7 +84,7 @@ func New() Model {
 	// capture glyphU's output; and before loadPalette only for tidiness.
 	cfg, cfgErr := LoadConfig()
 	useGlyphs(cfg.Icons)
-	palette := loadPalette()
+	palette := loadPalette(cfg.Theme.Palette)
 	applyTheme(palette)
 	styles := newStyles(palette)
 	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot))

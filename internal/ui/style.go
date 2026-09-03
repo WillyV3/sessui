@@ -30,29 +30,88 @@ type Palette struct {
 	Orange  lipgloss.Color
 }
 
-func loadPalette() Palette {
-	return Palette{
-		Accent:     themeColor("accent", "#00AFFF"),
-		Background: themeColor("background", "#1E1E2E"),
-		Foreground: themeColor("foreground", "#CDD6F4"),
-		Muted:      themeColor("muted", "#6C7086"),
-		Red:        themeColor("red", "#F38BA8"),
-		Green:      themeColor("green", "#A6E3A1"),
-		Yellow:     themeColor("yellow", "#F9E2AF"),
-		Blue:       themeColor("blue", "#89B4FA"),
-		Magenta:    themeColor("magenta", "#F5C2E7"),
-		Cyan:       themeColor("cyan", "#94E2D5"),
-		Orange:     themeColor("orange", "#FAB387"),
-	}
+// paletteSource names where colours come from. It is the user-facing
+// setting: "auto" follows the Omarchy theme when the box has one and falls
+// back to the built-in dark palette when it does not (a Mac, an SSH box);
+// "dark"/"light" pin a built-in palette regardless, for a terminal whose
+// look Omarchy does not control.
+type paletteSource string
+
+const (
+	paletteAuto  paletteSource = "auto"
+	paletteDark  paletteSource = "dark"
+	paletteLight paletteSource = "light"
+)
+
+// builtinPalettes are complete palettes that need no theme tooling. Dark is
+// Catppuccin Mocha, the set the app has always fallen back to; light is
+// Catppuccin Latte, the same hues on a light ground, so a Mac with a light
+// terminal is not stuck with dim text on white.
+var builtinPalettes = map[paletteSource]Palette{
+	paletteDark: {
+		Accent: "#00AFFF", Background: "#1E1E2E", Foreground: "#CDD6F4", Muted: "#6C7086",
+		Red: "#F38BA8", Green: "#A6E3A1", Yellow: "#F9E2AF", Blue: "#89B4FA",
+		Magenta: "#F5C2E7", Cyan: "#94E2D5", Orange: "#FAB387",
+	},
+	paletteLight: {
+		Accent: "#1E66F5", Background: "#EFF1F5", Foreground: "#4C4F69", Muted: "#9CA0B0",
+		Red: "#D20F39", Green: "#40A02B", Yellow: "#DF8E1D", Blue: "#1E66F5",
+		Magenta: "#EA76CB", Cyan: "#179299", Orange: "#FE640B",
+	},
 }
 
-func themeColor(name, fallback string) lipgloss.Color {
+// themeColorQuery asks the environment for one named theme colour. A
+// package var so tests can stand in for omarchy-theme-color without
+// shelling out; the real one is omarchyThemeColor.
+var themeColorQuery = omarchyThemeColor
+
+// omarchyThemeColor shells out to omarchy-theme-color for one slot. ok is
+// false on any failure -- missing binary, non-zero exit, empty output.
+func omarchyThemeColor(name string) (hex string, ok bool) {
 	out, err := exec.Command("omarchy-theme-color", name).Output()
-	hex := strings.TrimSpace(string(out))
-	if err != nil || hex == "" {
-		return lipgloss.Color(fallback)
+	hex = strings.TrimSpace(string(out))
+	return hex, err == nil && hex != ""
+}
+
+// omarchyThemeAvailable is answered ONCE per process, not once per colour:
+// eleven failed execs at startup on every box without Omarchy is the cost
+// this avoids, and it is what makes "auto" cheap enough to be the default.
+func omarchyThemeAvailable() bool {
+	_, err := exec.LookPath("omarchy-theme-color")
+	return err == nil
+}
+
+// loadPalette resolves the palette for a source. "auto" and any unknown
+// value follow Omarchy when it is available; slots Omarchy fails to answer
+// fall back to the dark palette individually, so a partial theme degrades
+// per-colour rather than all-or-nothing. A pinned source never shells out.
+func loadPalette(source paletteSource) Palette {
+	if p, pinned := builtinPalettes[source]; pinned {
+		return p
 	}
-	return lipgloss.Color(hex)
+	base := builtinPalettes[paletteDark]
+	if !omarchyThemeAvailable() {
+		return base
+	}
+	slot := func(name string, fallback lipgloss.Color) lipgloss.Color {
+		if hex, ok := themeColorQuery(name); ok {
+			return lipgloss.Color(hex)
+		}
+		return fallback
+	}
+	return Palette{
+		Accent:     slot("accent", base.Accent),
+		Background: slot("background", base.Background),
+		Foreground: slot("foreground", base.Foreground),
+		Muted:      slot("muted", base.Muted),
+		Red:        slot("red", base.Red),
+		Green:      slot("green", base.Green),
+		Yellow:     slot("yellow", base.Yellow),
+		Blue:       slot("blue", base.Blue),
+		Magenta:    slot("magenta", base.Magenta),
+		Cyan:       slot("cyan", base.Cyan),
+		Orange:     slot("orange", base.Orange),
+	}
 }
 
 // Styles bundles the lipgloss styles used across the list, footer, and
