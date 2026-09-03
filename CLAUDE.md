@@ -55,7 +55,9 @@ sessui --dump                    # headless one-shot row render (no interaction)
 - **A Nerd Font** (JetBrainsMono NF is the omarchy default) for the icons.
   Verify any new glyph is actually in the font before shipping it (`otfinfo -u`).
 - `omarchy-theme-color` for theme colors (falls back to defaults off Omarchy).
-- `cp3` (claude-peers) is optional — its absence just empties the peer column.
+- `cp3` (claude-peers) is optional. When it is not installed the peer column is
+  hidden outright — `.claude-peers-agent` markers are NOT read as down peers,
+  since a roster we never received is no evidence of liveness (`peerFleet`).
 
 ## Layout of the code
 

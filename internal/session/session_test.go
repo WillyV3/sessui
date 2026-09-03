@@ -292,7 +292,7 @@ func TestParsePeersJSON_Error(t *testing.T) {
 }
 
 func TestBuild_ExcludesCurrentAndMergesEverything(t *testing.T) {
-	got, agentPane := Build(sampleSessOut, samplePaneOut, parsePeersPlain(samplePeerOut), "Jim")
+	got, agentPane := Build(sampleSessOut, samplePaneOut, peerFleet{Rows: parsePeersPlain(samplePeerOut), Reachable: true}, "Jim")
 
 	names := make([]string, len(got))
 	for i, s := range got {
@@ -383,7 +383,7 @@ func TestBuild_ExcludesCurrentAndMergesEverything(t *testing.T) {
 // cwd cwd-matches peer "jim" (lowercase), proving the echo check is
 // case/hyphenation-insensitive (see NormalizeName), not a raw string ==.
 func TestBuild_SummaryEchoRejectedForOwnName(t *testing.T) {
-	got, _ := Build(sampleSessOut, samplePaneOut, parsePeersPlain(samplePeerOut), "nobody-is-current")
+	got, _ := Build(sampleSessOut, samplePaneOut, peerFleet{Rows: parsePeersPlain(samplePeerOut), Reachable: true}, "nobody-is-current")
 
 	var jim Session
 	found := false
@@ -418,7 +418,7 @@ func TestBuild_PeerJoin_SharedCWD(t *testing.T) {
 		{Name: "astrobot-omarchy", Up: true, Machine: "omarchy", Cwd: cwd},
 	}
 
-	got, _ := Build(sessOut, paneOut, peers, "current")
+	got, _ := Build(sessOut, paneOut, peerFleet{Rows: peers, Reachable: true}, "current")
 	byName := map[string]Session{}
 	for _, s := range got {
 		byName[s.Name] = s
@@ -478,7 +478,7 @@ func TestBuild_PeerJoin(t *testing.T) {
 		{Name: "sontara-web", Up: false, Pending: 1},
 	}
 
-	got, _ := Build(sessOut, paneOut, peers, "current")
+	got, _ := Build(sessOut, paneOut, peerFleet{Rows: peers, Reachable: true}, "current")
 	byName := map[string]Session{}
 	for _, s := range got {
 		byName[s.Name] = s
@@ -691,4 +691,62 @@ func TestAbbreviatePath(t *testing.T) {
 			t.Errorf("AbbreviatePath(%q) = %q, want %q", c.path, got, c.want)
 		}
 	}
+}
+
+// TestBuild_PeerJoin_CP3Unreachable pins the difference between "cp3 says
+// this peer is down" and "cp3 never answered". A .claude-peers-agent marker
+// is only evidence of a DOWN peer when there is a roster to be absent from;
+// with cp3 uninstalled or failing, the same marker means nothing about
+// liveness.
+//
+// This is not hypothetical: ~/projects and ~/hfl-projects are Syncthing-
+// replicated across the fleet, so those markers land on machines that have
+// never run cp3 (macbook1 carries 8 of them with no cp3 installed). Before
+// this, every one of them rendered as a dead peer -- a column of red dots
+// claiming the fleet was down on a machine that had simply never asked.
+//
+// The reachable subtest is the true-positive control: identical input, an
+// empty but ANSWERED roster, must still report the workspace as down. Without
+// it this test would also pass if Build stopped reading markers entirely.
+func TestBuild_PeerJoin_CP3Unreachable(t *testing.T) {
+	workspace := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workspace, spawnPeerMarker), []byte("caretaker\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	sessOut := "builder-area|1788360311|1788364693|0|1\n"
+	paneOut := "builder-area|" + workspace + "|bash|1|1|0|%1|willy@omarchy:~\n"
+
+	build := func(t *testing.T, fleet peerFleet) Session {
+		t.Helper()
+		got, _ := Build(sessOut, paneOut, fleet, "current")
+		if len(got) != 1 {
+			t.Fatalf("Build returned %d sessions, want 1", len(got))
+		}
+		return got[0]
+	}
+
+	t.Run("unreachable cp3 claims nothing about the peer", func(t *testing.T) {
+		s := build(t, peerFleet{}) // zero value: cp3 absent or failed
+
+		if s.PeerName != "" {
+			t.Errorf("PeerName = %q, want \"\" (cp3 never answered, so the marker proves nothing)", s.PeerName)
+		}
+		if s.AgentExited() {
+			t.Error("AgentExited() = true, want false (reporting a peer down on a roster we never received)")
+		}
+		if s.Machine != "" {
+			t.Errorf("Machine = %q, want \"\"", s.Machine)
+		}
+	})
+
+	t.Run("reachable cp3 with an empty roster does report the peer down", func(t *testing.T) {
+		s := build(t, peerFleet{Reachable: true}) // answered; nobody is up
+
+		if s.PeerName != "caretaker" {
+			t.Errorf("PeerName = %q, want \"caretaker\" (marker names it, and cp3 answered)", s.PeerName)
+		}
+		if !s.AgentExited() {
+			t.Error("AgentExited() = false, want true (cp3 answered and this peer was not in the roster)")
+		}
+	})
 }

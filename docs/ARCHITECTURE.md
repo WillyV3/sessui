@@ -34,6 +34,19 @@ is contested (session `sontara` → peer `astrobot` / `astrobot-omarchy`), so na
 -matching misses. Down/zombie workspace = a `.claude-peers-agent` marker present
 but no live peer (`AgentExited()`). `OwedMail` = the peer's `pending > 0`.
 
+**A marker is only evidence once cp3 has answered.** `fetchPeers` returns a
+`peerFleet{Rows, Reachable}`, and `Build` reads the marker only when
+`Reachable` — because "absent from a roster" and "we never received a roster"
+are opposite facts that a bare `[]peerRow` cannot tell apart. This matters off
+Omarchy: `~/projects` and `~/hfl-projects` are Syncthing-replicated, so those
+markers exist on machines that have never run cp3 (macbook1 carries 8). Reading
+them unconditionally rendered every session as a dead peer — a column of red
+dots asserting the fleet was down on a box that had simply never asked. An
+empty-but-`Reachable` roster is deliberately still evidence: cp3 answering "no
+one is up" genuinely means the marker's peer is down. Pinned by
+`TestBuild_PeerJoin_CP3Unreachable`, whose second subtest is the true-positive
+control.
+
 ### Native summary — `Summary` + `EffectiveSummary()`
 Claude Code sets its terminal title to a `✳`-prefixed task summary, exposed as
 tmux `#{pane_title}`. `Summary` is that title with the `✳ ` stripped — but only

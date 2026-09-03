@@ -149,21 +149,44 @@ func List() ([]Session, error) {
 	return sessions, nil
 }
 
+// peerFleet is what cp3 was able to tell us about the fleet.
+//
+// Reachable separates two facts that look identical in a bare []peerRow but
+// mean opposite things at a workspace carrying a .claude-peers-agent marker:
+//
+//   - Reachable, and the marker's peer isn't in Rows -> that peer really is
+//     down. The marker is evidence, and the workspace renders as a zombie.
+//   - Not reachable -> cp3 isn't installed or didn't answer. We know nothing
+//     about liveness, and the marker is evidence of nothing. Treating it as
+//     "down" tells the user their whole fleet is dead when in fact we simply
+//     never asked (see TestBuild_PeerJoin_CP3Unreachable).
+//
+// The zero value is the honest default for a machine with no cp3: not
+// reachable, no rows.
+type peerFleet struct {
+	Rows      []peerRow
+	Reachable bool
+}
+
 // fetchPeers is cp3's peer roster, best-effort: `cp3 peers --json` first,
 // falling back to the older plain `cp3 peers` table for a peer elsewhere on
 // the fleet still running a cp3 build without --json. Any failure of either
-// -- missing binary, non-zero exit, malformed JSON -- just means no peer
-// data; List never surfaces a cp3 error to the user.
-func fetchPeers() []peerRow {
+// -- missing binary, non-zero exit, malformed JSON -- yields the zero
+// peerFleet (not reachable); List never surfaces a cp3 error to the user.
+//
+// An empty-but-reachable roster is deliberately distinct from an unreachable
+// one: cp3 answering "no peers are up" is real information about liveness,
+// and markers are read against it.
+func fetchPeers() peerFleet {
 	if out, err := exec.Command("cp3", "peers", "--json").Output(); err == nil {
 		if rows, err := parsePeersJSON(string(out)); err == nil {
-			return rows
+			return peerFleet{Rows: rows, Reachable: true}
 		}
 	}
 	if out, err := exec.Command("cp3", "peers").Output(); err == nil {
-		return parsePeersPlain(string(out))
+		return peerFleet{Rows: parsePeersPlain(string(out)), Reachable: true}
 	}
-	return nil
+	return peerFleet{}
 }
 
 func runTmux(args ...string) (string, error) {
@@ -211,10 +234,10 @@ func Kill(name string) error {
 // which List uses to target its capture-pane calls; Classify itself is
 // tested directly, so Build's own tests only need to cover the bell-only
 // classification (State is Classify(agent, bell, "")).
-func Build(sessOut, paneOut string, peers []peerRow, current string) ([]Session, map[string]string) {
+func Build(sessOut, paneOut string, fleet peerFleet, current string) ([]Session, map[string]string) {
 	metas := parseSessions(sessOut)
 	cwds, apps, bell, agentPane, titles := parsePanes(paneOut)
-	peersByCWD, peersByName := indexPeers(peers)
+	peersByCWD, peersByName := indexPeers(fleet.Rows)
 
 	sessions := make([]Session, 0, len(metas))
 	for _, m := range metas {
@@ -224,8 +247,12 @@ func Build(sessOut, paneOut string, peers []peerRow, current string) ([]Session,
 		agent := hasAgentApp(apps[m.name])
 		cwd := cwds[m.name]
 
+		// The marker names this workspace's peer when cp3 has no row for its
+		// cwd -- but only once cp3 has actually answered, since "absent from
+		// a roster we never received" is not evidence that a peer is down.
+		// See peerFleet.
 		peerName := peersByCWD[cwd]
-		if peerName == "" {
+		if peerName == "" && fleet.Reachable {
 			peerName = peerMarkerName(cwd)
 		}
 		var machine, peerSummary string
