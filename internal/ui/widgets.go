@@ -71,10 +71,12 @@ type poller interface {
 	absorb(widgetPollMsg)
 }
 
-// widgetPollMsg carries a poll's result back to the widget that asked, by
-// name, so Model dispatches without knowing what the widget does with it.
+// widgetPollMsg carries a poll's result back to the widget that asked. The
+// poller rides in the message (identity, not a catalog name) so two shell
+// widgets -- a clock and a battery -- each get their own result, and Model
+// dispatches without a lookup.
 type widgetPollMsg struct {
-	name   string
+	src    poller
 	output string
 	err    error
 }
@@ -109,7 +111,7 @@ type namedWidget struct {
 // silently dropping the widget.
 var widgetCatalog = map[string]func(args map[string]string) (widget, error){
 	"attention": func(map[string]string) (widget, error) { return attentionWidget{}, nil },
-	"host":      func(map[string]string) (widget, error) { return hostWidget{}, nil },
+	"host":      newHostWidget,
 	"agents":    func(map[string]string) (widget, error) { return agentsWidget{}, nil },
 	"shell":     newShellWidget,
 }
@@ -193,8 +195,10 @@ func (w attentionWidget) expand(st widgetState, width int) string {
 // ---- host: which box this is. Matters now that the same UI runs on the
 // ---- Mac; collapsed it is just the short hostname.
 
-type hostWidget struct{}
+type hostWidget struct{ name string }
 
+// hostname is the short host name, resolved once: a hostname does not change
+// under a running popup, and icon() runs at spinner rate.
 func hostname() string {
 	h, err := os.Hostname()
 	if err != nil {
@@ -204,12 +208,14 @@ func hostname() string {
 	return short
 }
 
-func (hostWidget) icon(st widgetState) string {
-	return st.styles.Muted.Render(hostname())
+func newHostWidget(map[string]string) (widget, error) { return hostWidget{name: hostname()}, nil }
+
+func (w hostWidget) icon(st widgetState) string {
+	return st.styles.Muted.Render(w.name)
 }
 
-func (hostWidget) expand(st widgetState, width int) string {
-	line := st.styles.Header.Render(hostname()) + st.styles.Muted.Render(fmt.Sprintf("  ·  %d sessions", len(st.sessions)))
+func (w hostWidget) expand(st widgetState, width int) string {
+	line := st.styles.Header.Render(w.name) + st.styles.Muted.Render(fmt.Sprintf("  ·  %d sessions", len(st.sessions)))
 	return ansi.Truncate(line, width, "…")
 }
 
@@ -294,13 +300,12 @@ func (w *shellWidget) expand(st widgetState, width int) string {
 }
 
 func (w *shellWidget) poll() tea.Cmd {
-	cmd := w.cmd
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), shellPollTimeout)
 		defer cancel()
-		out, err := exec.CommandContext(ctx, "sh", "-c", cmd).Output()
+		out, err := exec.CommandContext(ctx, "sh", "-c", w.cmd).Output()
 		first, _, _ := strings.Cut(strings.TrimSpace(string(out)), "\n")
-		return widgetPollMsg{name: "shell", output: first, err: err}
+		return widgetPollMsg{src: w, output: first, err: err}
 	}
 }
 

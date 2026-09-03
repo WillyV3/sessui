@@ -141,7 +141,7 @@ func TestRenderHeaderLine_OneLineAtEveryFocus(t *testing.T) {
 		t.Fatalf("resolveWidgets: %v", err)
 	}
 	// Give the shell widget something long to expand so truncation is exercised.
-	widgets[3].widget.(*shellWidget).absorb(widgetPollMsg{name: "shell", output: strings.Repeat("x", 300)})
+	widgets[3].widget.(*shellWidget).absorb(widgetPollMsg{output: strings.Repeat("x", 300)})
 	widgets = append(widgets, namedWidget{name: "rude", widget: rudeWidget{}})
 
 	sessions := attentionFixture(14, 2, 1)

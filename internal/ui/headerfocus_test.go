@@ -28,7 +28,7 @@ func pressFocus(h *headerFocus, k tea.KeyMsg) *headerFocus {
 
 func TestHeaderFocus_TabCyclesAndWraps(t *testing.T) {
 	h := newHeaderFocus([]namedWidget{
-		{name: "a", widget: hostWidget{}}, {name: "b", widget: hostWidget{}}, {name: "c", widget: hostWidget{}},
+		{name: "a", widget: hostWidget{name: "h"}}, {name: "b", widget: hostWidget{name: "h"}}, {name: "c", widget: hostWidget{name: "h"}},
 	}, testHelp())
 
 	tab := tea.KeyMsg{Type: tea.KeyTab}
@@ -45,7 +45,7 @@ func TestHeaderFocus_TabCyclesAndWraps(t *testing.T) {
 }
 
 func TestHeaderFocus_EscFinishesWithNothingToApply(t *testing.T) {
-	h := newHeaderFocus([]namedWidget{{name: "a", widget: hostWidget{}}}, testHelp())
+	h := newHeaderFocus([]namedWidget{{name: "a", widget: hostWidget{name: "h"}}}, testHelp())
 	if done, _ := h.result(); done {
 		t.Fatal("finished before any key")
 	}
@@ -59,7 +59,7 @@ func TestHeaderFocus_EscFinishesWithNothingToApply(t *testing.T) {
 func TestHeaderFocus_RoutesKeysToTheFocusedControllable(t *testing.T) {
 	rec := &recorderWidget{}
 	h := newHeaderFocus([]namedWidget{
-		{name: "host", widget: hostWidget{}}, {name: "rec", widget: rec},
+		{name: "host", widget: hostWidget{name: "h"}}, {name: "rec", widget: rec},
 	}, testHelp())
 
 	space := tea.KeyMsg{Type: tea.KeySpace}

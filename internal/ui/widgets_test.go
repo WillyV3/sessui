@@ -88,7 +88,7 @@ func TestAgentsWidget(t *testing.T) {
 
 func TestHostWidget(t *testing.T) {
 	st := widgetState{styles: testStyles(), sessions: make([]session.Session, 3)}
-	w := hostWidget{}
+	w := hostWidget{name: hostname()}
 	if got := w.icon(st); !strings.Contains(got, hostname()) {
 		t.Errorf("icon = %q, want the hostname", got)
 	}
@@ -155,4 +155,22 @@ func TestShellWidget(t *testing.T) {
 			t.Errorf("expand at 20 = %d runes: %q", len([]rune(got)), got)
 		}
 	})
+}
+
+// TestShellWidget_TwoInstancesKeepTheirOwnResults: a poll result is routed
+// by identity, so a clock and a battery widget never swap outputs.
+func TestShellWidget_TwoInstancesKeepTheirOwnResults(t *testing.T) {
+	clock, _ := newShellWidget(map[string]string{"cmd": "echo tick"})
+	battery, _ := newShellWidget(map[string]string{"cmd": "echo 97%"})
+	for _, w := range []widget{clock, battery} {
+		msg := w.(poller).poll()().(widgetPollMsg)
+		msg.src.absorb(msg) // exactly what Model does with the message
+	}
+	st := widgetState{styles: testStyles()}
+	if got := clock.expand(st, 40); !strings.Contains(got, "tick") || strings.Contains(got, "97%") {
+		t.Errorf("clock = %q", got)
+	}
+	if got := battery.expand(st, 40); !strings.Contains(got, "97%") || strings.Contains(got, "tick") {
+		t.Errorf("battery = %q", got)
+	}
 }

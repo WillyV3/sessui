@@ -215,7 +215,10 @@ func (m *Model) relayout() {
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(reloadCmd(), reloadTickCmd(), tickCmd(), marqueeTickCmd(), m.spinner.Tick)
+	// pollWidgets at open, not only on the first tick: the popup is up for a
+	// second or two at a time, so a widget that waits for the tick is blank
+	// for most of its life.
+	return tea.Batch(reloadCmd(), reloadTickCmd(), tickCmd(), marqueeTickCmd(), m.spinner.Tick, m.pollWidgets())
 }
 
 func tickCmd() tea.Cmd {
@@ -284,11 +287,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(reloadCmd(), reloadTickCmd(), m.pollWidgets())
 
 	case widgetPollMsg:
-		for _, w := range m.widgets {
-			if p, ok := w.widget.(poller); ok && w.name == msg.name {
-				p.absorb(msg)
-			}
-		}
+		msg.src.absorb(msg)
 		return m, nil
 
 	case reloadMsg:
