@@ -21,7 +21,7 @@ func testStyles() Styles {
 		Magenta: "#F5C2E7", Cyan: "#94E2D5", Orange: "#FAB387",
 	}
 	applyTheme(palette)
-	return newStyles(palette)
+	return newStyles(palette, nil)
 }
 
 func TestRenderStatus_Priority(t *testing.T) {
