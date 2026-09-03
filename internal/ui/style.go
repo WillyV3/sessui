@@ -30,6 +30,67 @@ type Palette struct {
 	Orange  lipgloss.Color
 }
 
+// slotName names one colour in a Palette. It is the unit the user picks
+// from when recolouring a role -- never a raw hex, so a theme switch (a new
+// Palette) always re-resolves it instead of leaving a stale colour behind.
+type slotName string
+
+const (
+	slotAccent     slotName = "accent"
+	slotBackground slotName = "background"
+	slotForeground slotName = "foreground"
+	slotMuted      slotName = "muted"
+	slotRed        slotName = "red"
+	slotGreen      slotName = "green"
+	slotYellow     slotName = "yellow"
+	slotBlue       slotName = "blue"
+	slotMagenta    slotName = "magenta"
+	slotCyan       slotName = "cyan"
+	slotOrange     slotName = "orange"
+)
+
+// slotNames lists every Palette slot in a stable display order -- what a
+// settings UI iterates to offer the picker, so it never has to reach into
+// Palette's fields directly.
+func (p Palette) slotNames() []slotName {
+	return []slotName{
+		slotAccent, slotBackground, slotForeground, slotMuted,
+		slotRed, slotGreen, slotYellow, slotBlue, slotMagenta, slotCyan, slotOrange,
+	}
+}
+
+// slot resolves a slotName against this Palette. ok is false for anything
+// that isn't one of the constants above -- e.g. a typo hand-edited into
+// config.json -- so a caller can fall back instead of rendering garbage.
+func (p Palette) slot(name slotName) (lipgloss.Color, bool) {
+	switch name {
+	case slotAccent:
+		return p.Accent, true
+	case slotBackground:
+		return p.Background, true
+	case slotForeground:
+		return p.Foreground, true
+	case slotMuted:
+		return p.Muted, true
+	case slotRed:
+		return p.Red, true
+	case slotGreen:
+		return p.Green, true
+	case slotYellow:
+		return p.Yellow, true
+	case slotBlue:
+		return p.Blue, true
+	case slotMagenta:
+		return p.Magenta, true
+	case slotCyan:
+		return p.Cyan, true
+	case slotOrange:
+		return p.Orange, true
+	default:
+		return "", false
+	}
+}
+
 // paletteSource names where colours come from. It is the user-facing
 // setting: "auto" follows the Omarchy theme when the box has one and falls
 // back to the built-in dark palette when it does not (a Mac, an SSH box);
@@ -195,7 +256,77 @@ func (s Styles) activeHeat(since time.Duration) lipgloss.Style {
 	}
 }
 
-func newStyles(p Palette) Styles {
+// role names one visible thing a user may recolour -- deliberately a small
+// set: only the elements that carry meaning on their own (a status colour, a
+// pill, the row highlight), not every lipgloss.Style newStyles happens to
+// build. Everything else (Name, Footer, Help, Summary, Count, the active*
+// heat buckets, Error) stays on its literal Palette field -- recolouring
+// "needs you" must not also recolour unrelated errors or the count line.
+type role string
+
+const (
+	roleHeader    role = "header"
+	roleCursor    role = "cursor"
+	roleNeedsYou  role = "needs-you"
+	roleMail      role = "mail"
+	roleWorking   role = "working"
+	rolePeerUp    role = "peer-up"
+	rolePeerDown  role = "peer-down"
+	roleSelection role = "selection"
+)
+
+// roleNames lists every role in a stable display order -- what a settings
+// UI iterates to offer the picker, paired with slotNames.
+func roleNames() []role {
+	return []role{
+		roleHeader, roleCursor, roleNeedsYou, roleMail,
+		roleWorking, rolePeerUp, rolePeerDown, roleSelection,
+	}
+}
+
+// defaultRoleSlots is the slot each role resolves to absent a user mapping
+// -- exactly what newStyles hardcoded before roles existed, so an empty
+// mapping renders byte-identical to the shipped look.
+//
+// roleMail is the one slot that took a real decision: today the header's
+// MailPill badge is Accent while the inline "✉" marker next to a peer dot
+// (Styles.Mail, delegate.go's renderPeer) is Yellow -- the same concept, two
+// colours. A role maps to exactly one slot, so only one of them can move
+// with it. MailPill is the one exposed: it mirrors NeedsYouPill, the other
+// header-band badge that IS role-driven, so the two pills stay a consistent
+// pair a user can retheme together. The inline "✉" keeps its literal
+// p.Yellow -- a small secondary glyph beside the peer dot, not a role worth
+// a picker entry of its own.
+var defaultRoleSlots = map[role]slotName{
+	roleHeader:    slotAccent,
+	roleCursor:    slotAccent,
+	roleNeedsYou:  slotRed,
+	roleMail:      slotAccent,
+	roleWorking:   slotAccent,
+	rolePeerUp:    slotGreen,
+	rolePeerDown:  slotRed,
+	roleSelection: slotMuted,
+}
+
+// resolveRole is the one place a role becomes a colour: the user's mapping
+// wins when it names a slot that exists on p; a missing role, or one mapped
+// to an unknown slot name (a typo hand-edited into config.json), falls back
+// to defaultRoleSlots -- so a bad config.json degrades to the shipped look
+// for that one role instead of failing the whole form.
+func resolveRole(p Palette, roles map[role]slotName, r role) lipgloss.Color {
+	name, ok := roles[r]
+	if !ok {
+		name = defaultRoleSlots[r]
+	}
+	if c, ok := p.slot(name); ok {
+		return c
+	}
+	c, _ := p.slot(defaultRoleSlots[r])
+	return c
+}
+
+func newStyles(p Palette, roles map[role]slotName) Styles {
+	c := func(r role) lipgloss.Color { return resolveRole(p, roles, r) }
 	return Styles{
 		Name: lipgloss.NewStyle().Bold(true).Foreground(p.Foreground),
 		// "Muted" = de-emphasised TEXT (age, idle status, the last-active
@@ -204,27 +335,27 @@ func newStyles(p Palette) Styles {
 		// terminal's own Faint attribute instead: readable-dim, theme-agnostic,
 		// and it falls back to full foreground (never invisible) if unsupported.
 		Muted:   lipgloss.NewStyle().Foreground(p.Foreground).Faint(true),
-		Cursor:  lipgloss.NewStyle().Foreground(p.Accent).Bold(true),
+		Cursor:  lipgloss.NewStyle().Foreground(c(roleCursor)).Bold(true),
 		Footer:  lipgloss.NewStyle().Foreground(p.Foreground),
 		Help:    lipgloss.NewStyle().Foreground(p.Foreground).Faint(true).Italic(true),
 		Error:   lipgloss.NewStyle().Foreground(p.Red).Bold(true),
-		Working: lipgloss.NewStyle().Foreground(p.Accent),
+		Working: lipgloss.NewStyle().Foreground(c(roleWorking)),
 		Summary: lipgloss.NewStyle().Foreground(p.Foreground),
 		Count:   lipgloss.NewStyle().Foreground(p.Foreground),
 		// Column labels: the accent colour + bold, distinct from the
 		// foreground row text (and well clear of the theme's near-invisible
 		// "muted" slot). The header carries its own icons, so it reads as a
 		// header band rather than another data row.
-		Header: lipgloss.NewStyle().Foreground(p.Accent).Bold(true),
+		Header: lipgloss.NewStyle().Foreground(c(roleHeader)).Bold(true),
 		// The theme's "muted" slot is a surface/border colour -- wrong for
 		// text, right as a subtle full-row selection background that leaves
 		// every cell's own foreground readable on top (see selectRow).
-		selectedBG:   bgSGR(p.Muted),
-		PeerUp:       lipgloss.NewStyle().Foreground(p.Green),
-		PeerDown:     lipgloss.NewStyle().Foreground(p.Red),
+		selectedBG:   bgSGR(c(roleSelection)),
+		PeerUp:       lipgloss.NewStyle().Foreground(c(rolePeerUp)),
+		PeerDown:     lipgloss.NewStyle().Foreground(c(rolePeerDown)),
 		Mail:         lipgloss.NewStyle().Foreground(p.Yellow),
-		NeedsYouPill: lipgloss.NewStyle().Bold(true).Background(p.Red).Foreground(p.Background).Padding(0, 1),
-		MailPill:     lipgloss.NewStyle().Bold(true).Background(p.Accent).Foreground(p.Background).Padding(0, 1),
+		NeedsYouPill: lipgloss.NewStyle().Bold(true).Background(c(roleNeedsYou)).Foreground(p.Background).Padding(0, 1),
+		MailPill:     lipgloss.NewStyle().Bold(true).Background(c(roleMail)).Foreground(p.Background).Padding(0, 1),
 		activeFresh:  lipgloss.NewStyle().Foreground(p.Green),
 		activeRecent: lipgloss.NewStyle().Foreground(p.Cyan),
 		activeToday:  lipgloss.NewStyle().Foreground(p.Yellow),

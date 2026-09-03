@@ -24,13 +24,18 @@ type Config struct {
 	Theme ThemeConfig `json:"theme,omitempty"`
 }
 
-// ThemeConfig is how the palette is chosen. A struct rather than a bare
-// string so the role-to-slot mapping the settings UI adds next has a home
-// without reshaping the file.
+// ThemeConfig is how the palette is chosen and, optionally, recoloured.
 type ThemeConfig struct {
 	// Palette is "auto" (Omarchy's theme when present, else dark), or a
 	// pinned built-in: "dark" | "light".
 	Palette paletteSource `json:"palette,omitempty"`
+	// Roles remaps a UI role (e.g. "needs-you") to a Palette slot (e.g.
+	// "blue") instead of the shipped default -- see defaultRoleSlots. Never
+	// raw hex: a slot is resolved against whatever Palette is live, so the
+	// mapping survives an Omarchy theme switch instead of the next switch
+	// clobbering it. A role missing here, or mapped to an unknown slot name,
+	// falls back to its default -- see resolveRole.
+	Roles map[role]slotName `json:"roles,omitempty"`
 }
 
 // withDefaults fills anything the file left unset, so callers never branch

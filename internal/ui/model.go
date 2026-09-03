@@ -115,7 +115,7 @@ func New() Model {
 	useGlyphs(cfg.Icons)
 	palette := loadPalette(cfg.Theme.Palette)
 	applyTheme(palette)
-	styles := newStyles(palette)
+	styles := newStyles(palette, cfg.Theme.Roles)
 	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 	delegate := &rowDelegate{styles: styles, home: home, spinner: sp}
 
