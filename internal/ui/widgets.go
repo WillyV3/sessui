@@ -114,6 +114,8 @@ var widgetCatalog = map[string]func(args map[string]string) (widget, error){
 	"host":      newHostWidget,
 	"agents":    func(map[string]string) (widget, error) { return agentsWidget{}, nil },
 	"shell":     newShellWidget,
+	// now-playing lives in nowplaying.go: Omarchy's media service as a widget.
+	"now-playing": newNowPlayingWidget,
 }
 
 // resolveWidgets turns settings into widgets, in order. An unknown name is

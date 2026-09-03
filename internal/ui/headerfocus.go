@@ -24,7 +24,7 @@ type headerFocus struct {
 }
 
 var headerFocusKeys = struct{ next, prev, close key.Binding }{
-	next:  key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next widget")),
+	next:  key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next")),
 	prev:  key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("⇧tab", "prev")),
 	close: key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
 }

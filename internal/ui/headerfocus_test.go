@@ -1,11 +1,13 @@
 package ui
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // recorderWidget is a controllable widget that remembers the keys it was
@@ -84,3 +86,17 @@ func TestHeaderFocus_RoutesKeysToTheFocusedControllable(t *testing.T) {
 }
 
 func testHelp() help.Model { return help.New() }
+
+// TestHeaderFocus_LegendFitsTheFooter: the widest shipped legend -- the
+// transport plus the three focus keys -- fits the default row untruncated.
+func TestHeaderFocus_LegendFitsTheFooter(t *testing.T) {
+	np := &nowPlayingWidget{client: &fakeMedia{}, available: true}
+	h := newHeaderFocus([]namedWidget{{name: "now-playing", widget: np}}, testHelp())
+	legend := h.View()
+	if w := lipgloss.Width(legend); w > defaultUsableWidth {
+		t.Errorf("legend is %d wide, exceeds %d: %q", w, defaultUsableWidth, legend)
+	}
+	if strings.Contains(legend, "…") {
+		t.Errorf("legend truncated: %q", legend)
+	}
+}

@@ -125,6 +125,13 @@ shows what they are.
 | `host`      | the short hostname            | hostname · session count                      |
 | `agents`    | `working/idle` counts, hidden with no agents | `2 working · 8 idle · 1 need you` |
 | `shell`     | `args.icon` (default `$`)     | the first line of `args.cmd`'s output          |
+| `now-playing` | a note while a player has media, hidden otherwise | `▶ Artist – Title · player`, with a transport: `space` play/pause · `←→` track · `+/-` volume · `m` mute · `s` source |
+
+`now-playing` is a thin client of Omarchy's own media service
+(`omarchy-shell media status|playPause|next|previous|sourceNext` and
+`omarchy-audio-output-volume`), so it controls whatever Omarchy's bar
+controls — every player, no MPRIS code in sessui. On a box without
+`omarchy-shell` (a Mac) it hides itself.
 
 `shell` is the plugin escape hatch — any command, run on the 2 s refresh
 with a 1.5 s timeout, off the UI thread. Two are fine; each keeps its own
