@@ -30,6 +30,36 @@ type reloadMsg struct {
 	err      error
 }
 
+// columnsAppliedMsg is the column editor's apply Cmd result (see coledit.go's
+// result()): the edited settings, ready for Model to persist and relayout
+// from. Kept overlay-agnostic on purpose -- the editor never touches Model
+// internals directly, the same shape rename/kill already use via
+// doAndReload's Cmd-returns-a-msg pattern.
+type columnsAppliedMsg struct{ columns []columnSetting }
+
+// editorPreviewRows caps how many real session rows the column editor's live
+// preview draws -- enough to read as a table, not a full scroll of the list.
+const editorPreviewRows = 6
+
+// editorPreview is the column editor's preview closure (see coledit.go): the
+// SAME renderers the live list uses, over the first few real sessions, at
+// whatever layout the editor is currently trying -- so the user edits the
+// actual table, never a mockup.
+func (m Model) editorPreview(layout tableLayout) string {
+	lines := []string{renderHeader(m.styles, layout)}
+	now := time.Now()
+	for i, item := range m.list.Items() {
+		if i >= editorPreviewRows {
+			break
+		}
+		if it, ok := item.(sessionItem); ok {
+			c := cell{styles: m.styles, home: m.home, now: now, session: it.Session, spinner: m.spinner}
+			lines = append(lines, renderRow(layout, c, 0, false))
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
 var appStyle = lipgloss.NewStyle().Padding(1, 2)
 
 type Model struct {
@@ -38,14 +68,19 @@ type Model struct {
 	delegate *rowDelegate // same pointer handed to list.New, so its spinner
 	// field can be kept in sync with Model's on every spinner.TickMsg.
 
-	// overlay is whatever has taken over the footer band -- a huh rename
-	// or kill-confirm form today, nil (the common case) when the list has
-	// focus. See overlay.go for the completion contract (overlayResult)
-	// that lets Model handle any overlay kind through updateOverlay
-	// without knowing what's actually running in it.
+	// overlay is whatever has taken the keyboard: a huh rename or
+	// kill-confirm form in the footer band, or the column editor in place of
+	// the list body; nil (the common case) when the list has focus. See
+	// overlay.go for the completion contract (overlayResult) that lets Model
+	// handle any overlay kind through updateOverlay without knowing what's
+	// actually running in it.
 	overlay  tea.Model
 	huhTheme *huh.Theme // built once from Palette (see newHuhTheme), handed to every overlay
 	help     help.Model // renders appKeys (keys.go) for helpLine
+	// cfg is the persisted configuration as loaded; columns below is the
+	// live copy the layout reads. Kept so a column-editor apply can save the
+	// whole file back without losing the icon/theme choices it doesn't edit.
+	cfg Config
 
 	err           error
 	home          string
@@ -110,7 +145,7 @@ func New() Model {
 	m := Model{
 		list: l, spinner: sp, delegate: delegate, home: home, styles: styles,
 		huhTheme: newHuhTheme(palette), help: newHelp(palette),
-		columns: cfg.Columns, err: cfgErr,
+		cfg: cfg, columns: cfg.Columns, err: cfgErr,
 	}
 	m.relayout()
 	return m
@@ -163,6 +198,19 @@ func reloadCmd() tea.Cmd {
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case columnsAppliedMsg:
+		// The editor's result, delivered through the generic overlay path
+		// (updateOverlay ran its apply Cmd). Persist the whole config, not
+		// just columns, so the icon and theme choices the editor doesn't
+		// touch survive the write.
+		m.columns = msg.columns
+		m.cfg.Columns = msg.columns
+		if err := SaveConfig(m.cfg); err != nil {
+			m.err = err
+		}
+		m.relayout()
+		return m, nil
+
 	case tickMsg:
 		return m, tickCmd()
 
@@ -354,6 +402,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.overlay.Init()
 		}
 		return m, nil
+
+	case key.Matches(msg, appKeys.Columns):
+		m.overlay = newColumnEditor(m.styles, m.columns, m.showPeer, m.usableWidth(), m.editorPreview)
+		return m, m.overlay.Init()
 	}
 
 	// Type-to-filter without "/": the first printable key arms the list's own
@@ -437,6 +489,14 @@ func doAndReload(action func() error) tea.Cmd {
 }
 
 func (m Model) View() string {
+	// The column editor replaces the list body: its live preview IS the
+	// table, so drawing the list underneath would show two of them. Every
+	// other overlay (huh rename/kill) is a single footer line and leaves the
+	// list in place -- see footerLine.
+	if editor, ok := m.overlay.(*columnEditor); ok {
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, appStyle.Render(editor.View()))
+	}
+
 	lm := m.list
 	lm.SetSize(m.listSize(1)) // count + header (in listSize) + 1 footer line
 

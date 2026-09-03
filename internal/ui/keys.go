@@ -13,12 +13,13 @@ import (
 // GOTCHAS #5, "no vim keys"). One type is the single source of truth for
 // both dispatch and the legend, so they can't drift apart.
 type keyMap struct {
-	Move   key.Binding
-	Filter key.Binding
-	Enter  key.Binding
-	Rename key.Binding
-	Kill   key.Binding
-	Quit   key.Binding
+	Move    key.Binding
+	Filter  key.Binding
+	Enter   key.Binding
+	Rename  key.Binding
+	Kill    key.Binding
+	Columns key.Binding // opens the column editor (coledit.go)
+	Quit    key.Binding
 }
 
 // appKeys is the app's one keymap instance -- handleKey matches Enter,
@@ -30,17 +31,18 @@ var appKeys = keyMap{
 	// any printable rune arms the filter, see handleKey): key.Binding.Enabled
 	// requires a non-nil key list, so an empty WithKeys would make bubbles/help
 	// silently drop this from the legend.
-	Filter: key.NewBinding(key.WithKeys("a-z"), key.WithHelp("a-z", "filter")),
-	Enter:  key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "switch/create")),
-	Rename: key.NewBinding(key.WithKeys("ctrl+r"), key.WithHelp("ctrl+r", "rename")),
-	Kill:   key.NewBinding(key.WithKeys("ctrl+x"), key.WithHelp("ctrl+x", "kill")),
-	Quit:   key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "quit")),
+	Filter:  key.NewBinding(key.WithKeys("a-z"), key.WithHelp("a-z", "filter")),
+	Enter:   key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "switch/create")),
+	Rename:  key.NewBinding(key.WithKeys("ctrl+r"), key.WithHelp("ctrl+r", "rename")),
+	Kill:    key.NewBinding(key.WithKeys("ctrl+x"), key.WithHelp("ctrl+x", "kill")),
+	Columns: key.NewBinding(key.WithKeys("ctrl+e"), key.WithHelp("ctrl+e", "columns")),
+	Quit:    key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "quit")),
 }
 
 // ShortHelp satisfies bubbles/help's help.KeyMap: the one line footerLine
 // renders when no overlay or error is showing.
 func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Move, k.Filter, k.Enter, k.Quit, k.Rename, k.Kill}
+	return []key.Binding{k.Move, k.Filter, k.Enter, k.Quit, k.Rename, k.Kill, k.Columns}
 }
 
 // FullHelp satisfies help.KeyMap. sessui's footer is a single line -- it

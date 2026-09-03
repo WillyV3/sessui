@@ -65,6 +65,7 @@ var asciiGlyphs = map[rune]string{
 	0xF0E7E: "@",  // attached (monitor)
 	0xF0EA1: "m",  // machine (server)
 	0xF0F3:  "!",  // needs-you pill (bell)
+	0x25C6:  "#",  // column editor: armed-for-move marker (◆)
 
 	// app icons (icons.go)
 	0xEC82:  "C",   // claude
