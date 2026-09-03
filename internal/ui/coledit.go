@@ -59,8 +59,9 @@ type editorKeys struct {
 	arm    key.Binding
 	hide   key.Binding
 	resize key.Binding
-	close  key.Binding
-	reset  key.Binding
+	close   key.Binding
+	abandon key.Binding
+	reset   key.Binding
 }
 
 func newEditorKeys() editorKeys {
@@ -70,14 +71,20 @@ func newEditorKeys() editorKeys {
 		hide:   key.NewBinding(key.WithKeys(" "), key.WithHelp("space", "hide/show")),
 		resize: key.NewBinding(key.WithKeys("+", "=", "-", "_"), key.WithHelp("+/-", "resize")),
 		close:  key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "apply & close")),
-		reset:  key.NewBinding(key.WithKeys("ctrl+r"), key.WithHelp("ctrl+r", "reset")),
+		// abandon closes WITHOUT applying: the table goes back to exactly what
+		// it was when the editor opened, and nothing is written. ctrl+z reads
+		// as "undo", which is what the user means by it; ctrl+q/ctrl+s are
+		// terminal flow-control on some setups and ctrl+x already means kill
+		// in the list -- the same letter must not mean two things.
+		abandon: key.NewBinding(key.WithKeys("ctrl+z"), key.WithHelp("ctrl+z", "abandon")),
+		reset:   key.NewBinding(key.WithKeys("ctrl+r"), key.WithHelp("ctrl+r", "reset")),
 	}
 }
 
 // columnEditor is the WYSIWYG column editor overlay (see the package doc
 // above). It owns the keyboard while it's up and reports itself done via
-// result() (the pull-based overlayResult contract in overlay.go) -- there is
-// deliberately no path that discards the edit; see esc's handling below.
+// result() (the pull-based overlayResult contract in overlay.go). Two ways
+// out: esc applies, ctrl+z abandons -- see result().
 type columnEditor struct {
 	styles   Styles
 	showPeer bool
@@ -99,9 +106,10 @@ type columnEditor struct {
 	// exact columnSetting.Width contract, so Result() is a direct read.
 	widths map[columnID]int
 
-	cursor   int  // index into order
-	armed    bool // enter arms the selected column for a swap-move
-	finished bool // an unarmed esc was pressed -- see result()
+	cursor    int  // index into order
+	armed     bool // enter arms the selected column for a swap-move
+	finished  bool // an unarmed esc or ctrl+z was pressed -- see result()
+	abandoned bool // it was ctrl+z: finish with nothing to apply
 }
 
 // newColumnEditor builds the editor over `current`'s configuration. preview
@@ -280,23 +288,31 @@ func (e *columnEditor) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		e.resize(-1)
 	case "ctrl+r":
 		e.reset(defaultColumnSettings())
+	case "ctrl+z":
+		e.finished, e.abandoned = true, true
 	case "esc":
 		if e.armed { // esc while armed only disarms -- it does not close
 			e.armed = false
 			return e, nil
 		}
-		e.finished = true // see result(): there is no cancel gesture, on purpose
+		e.finished = true // apply: see result()
 	}
 	return e, nil
 }
 
-// result satisfies overlay.go's pull-based overlayResult contract: the
-// editor is finished only after an unarmed esc (never by ctrl+r, which
-// resets in place without closing), and its apply Cmd captures the current
-// Result() into a columnsAppliedMsg for Model to persist and relayout from.
+// result satisfies overlay.go's pull-based overlayResult contract. The
+// editor is finished after an unarmed esc or a ctrl+z (never by ctrl+r,
+// which resets in place without closing). esc's apply Cmd captures the
+// current Result() into a columnsAppliedMsg for Model to persist and
+// relayout from; ctrl+z finishes with a nil apply, so Model drops the
+// overlay and nothing else happens -- the list was never re-laid-out while
+// the editor was open, so "abandon" needs no undo, just no apply.
 func (e *columnEditor) result() (finished bool, apply tea.Cmd) {
 	if !e.finished {
 		return false, nil
+	}
+	if e.abandoned {
+		return true, nil
 	}
 	settings := e.Result()
 	return true, func() tea.Msg { return columnsAppliedMsg{columns: settings} }
@@ -316,7 +332,7 @@ func (e *columnEditor) ShortHelp() []key.Binding {
 	if !e.selectionIsFlex() {
 		bindings = append(bindings, e.keys.resize)
 	}
-	return append(bindings, close, e.keys.reset)
+	return append(bindings, close, e.keys.abandon, e.keys.reset)
 }
 
 func (e *columnEditor) FullHelp() [][]key.Binding {

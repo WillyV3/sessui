@@ -357,3 +357,57 @@ func TestColumnEditor_View_ContextualHelp(t *testing.T) {
 		t.Error("armed help should not still say \"arm to move\"")
 	}
 }
+
+// TestColumnEditor_AbandonDiscards pins the way out that isn't esc: ctrl+z
+// finishes the editor with NOTHING to apply, so a swap made before it never
+// reaches Model, the list keeps the order it had, and no config is written.
+// The esc subtest is the control -- same swap, applied -- so this cannot
+// pass by the editor simply never finishing.
+func TestColumnEditor_AbandonDiscards(t *testing.T) {
+	press := func(e *columnEditor, keys ...string) {
+		for _, k := range keys {
+			var msg tea.KeyMsg
+			switch k {
+			case "right":
+				msg = tea.KeyMsg{Type: tea.KeyRight}
+			case "enter":
+				msg = tea.KeyMsg{Type: tea.KeyEnter}
+			case "esc":
+				msg = tea.KeyMsg{Type: tea.KeyEsc}
+			case "ctrl+z":
+				msg = tea.KeyMsg{Type: tea.KeyCtrlZ}
+			default:
+				t.Fatalf("unknown key %q", k)
+			}
+			e.Update(msg)
+		}
+	}
+	open := func() *columnEditor {
+		return newColumnEditor(testStyles(), defaultColumnSettings(), true, defaultUsableWidth, func(tableLayout) string { return "" })
+	}
+
+	t.Run("ctrl+z after a swap finishes with nil apply", func(t *testing.T) {
+		e := open()
+		press(e, "right", "enter", "right", "ctrl+z") // arm apps, swap it right, abandon
+		finished, apply := e.result()
+		if !finished {
+			t.Fatal("result() finished = false after ctrl+z, want true (the editor must close)")
+		}
+		if apply != nil {
+			t.Fatal("result() apply != nil after ctrl+z, want nil (nothing must be applied)")
+		}
+	})
+
+	t.Run("control: esc after the same swap applies it", func(t *testing.T) {
+		e := open()
+		press(e, "right", "enter", "right", "enter", "esc")
+		finished, apply := e.result()
+		if !finished || apply == nil {
+			t.Fatalf("result() = (%v, %v), want (true, non-nil) -- esc must apply", finished, apply != nil)
+		}
+		got := apply().(columnsAppliedMsg).columns
+		if got[1].ID != colActive || got[2].ID != colApps {
+			t.Errorf("applied order = %v, want apps and active swapped", got)
+		}
+	})
+}
