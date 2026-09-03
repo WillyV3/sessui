@@ -72,6 +72,16 @@ type Styles struct {
 	PeerDown lipgloss.Style // a down peer's name colour (red) in the session cell
 	Mail     lipgloss.Style // the "✉" owed-mail marker trailing the name
 
+	// Count-line attention pills (see header.go) -- a solid badge, not just
+	// coloured text, so they read as status lights above the header rather
+	// than more prose next to the tally. Foreground is the palette's
+	// Background colour: whichever end of the light/dark scale the active
+	// theme sits at, Background sits at the opposite end from Red/Accent, so
+	// the pill text stays legible on both the light Omarchy default and the
+	// dark fallback palette without a hardcoded light/dark branch.
+	NeedsYouPill lipgloss.Style // bell + count, on the theme red
+	MailPill     lipgloss.Style // envelope + count, on the accent
+
 	// activeHeat buckets: the last-active elapsed, coloured by recency --
 	// hottest (green) when fresh, cooling to dim once it's a day-plus stale.
 	activeFresh  lipgloss.Style // < 1m
@@ -154,6 +164,8 @@ func newStyles(p Palette) Styles {
 		PeerUp:       lipgloss.NewStyle().Foreground(p.Green),
 		PeerDown:     lipgloss.NewStyle().Foreground(p.Red),
 		Mail:         lipgloss.NewStyle().Foreground(p.Yellow),
+		NeedsYouPill: lipgloss.NewStyle().Bold(true).Background(p.Red).Foreground(p.Background).Padding(0, 1),
+		MailPill:     lipgloss.NewStyle().Bold(true).Background(p.Accent).Foreground(p.Background).Padding(0, 1),
 		activeFresh:  lipgloss.NewStyle().Foreground(p.Green),
 		activeRecent: lipgloss.NewStyle().Foreground(p.Cyan),
 		activeToday:  lipgloss.NewStyle().Foreground(p.Yellow),
