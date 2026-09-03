@@ -11,22 +11,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/willyv3/sessui/internal/session"
-)
-
-type mode int
-
-const (
-	modeList mode = iota
-	modeRename
-	modeConfirmKill
 )
 
 type tickMsg time.Time
@@ -38,14 +31,6 @@ type reloadMsg struct {
 	err      error
 }
 
-// Custom actions the list doesn't provide, surfaced in its own help view
-// via AdditionalShortHelpKeys/AdditionalFullHelpKeys and handled below.
-var (
-	enterKey  = key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "switch/create"))
-	renameKey = key.NewBinding(key.WithKeys("ctrl+r"), key.WithHelp("ctrl+r", "rename"))
-	killKey   = key.NewBinding(key.WithKeys("ctrl+x"), key.WithHelp("ctrl+x", "kill"))
-)
-
 var appStyle = lipgloss.NewStyle().Padding(1, 2)
 
 type Model struct {
@@ -54,10 +39,14 @@ type Model struct {
 	delegate *rowDelegate // same pointer handed to list.New, so its spinner
 	// field can be kept in sync with Model's on every spinner.TickMsg.
 
-	mode         mode
-	renameInput  textinput.Model
-	renameTarget string
-	killTarget   string
+	// overlay is whatever has taken over the footer band -- a huh rename
+	// or kill-confirm form today, nil (the common case) when the list has
+	// focus. See overlay.go for the completion contract (overlayResult)
+	// that lets Model handle any overlay kind through updateOverlay
+	// without knowing what's actually running in it.
+	overlay  tea.Model
+	huhTheme *huh.Theme // built once from Palette (see newHuhTheme), handed to every overlay
+	help     help.Model // renders appKeys (keys.go) for helpLine
 
 	err           error
 	home          string
@@ -107,11 +96,10 @@ func New() Model {
 	// (any letter, no "/") is armed in handleKey, and the arrows keep working
 	// even mid-filter -- see handleKey.
 
-	ti := textinput.New()
-	ti.CharLimit = 128
-	ti.Width = 40
-
-	return Model{list: l, spinner: sp, delegate: delegate, renameInput: ti, home: home, styles: styles}
+	return Model{
+		list: l, spinner: sp, delegate: delegate, home: home, styles: styles,
+		huhTheme: newHuhTheme(palette), help: newHelp(palette),
+	}
 }
 
 func (m Model) Init() tea.Cmd {
@@ -174,16 +162,50 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.list.SetSize(m.listSize(0))
+		// ponytail: an open overlay keeps the width it was built with (see
+		// contentWidth in handleKey) rather than being resized live -- a
+		// mid-rename terminal resize is rare enough not to earn plumbing a
+		// resize into overlayResult's contract for every future overlay kind.
 		return m, nil
 
 	case tea.KeyMsg:
+		// Ctrl+C quits the whole program from anywhere, overlay or not --
+		// checked here, before routing, so an open overlay can never
+		// swallow it.
+		if msg.Type == tea.KeyCtrlC {
+			return m, tea.Quit
+		}
+		if m.overlay != nil {
+			return m.updateOverlay(msg)
+		}
 		return m.handleKey(msg)
 	}
 
 	// Everything else -- FilterMatchesMsg, the list's spinner/status
-	// timers -- belongs to the list itself.
+	// timers, an open overlay's own cursor-blink/internal messages --
+	// belongs to whichever of the two has focus.
+	if m.overlay != nil {
+		return m.updateOverlay(msg)
+	}
 	var cmd tea.Cmd
 	m.list, cmd = m.list.Update(msg)
+	return m, cmd
+}
+
+// updateOverlay drives the active overlay and, once it reports finished
+// (see overlayResult in overlay.go), clears it and hands back whatever
+// command it produced -- the real action + reload on completion, nothing
+// on abort. One path for every overlay kind: no switch on what's showing.
+func (m Model) updateOverlay(msg tea.Msg) (tea.Model, tea.Cmd) {
+	next, cmd := m.overlay.Update(msg)
+	m.overlay = next
+
+	if r, ok := m.overlay.(overlayResult); ok {
+		if finished, apply := r.result(); finished {
+			m.overlay = nil
+			return m, tea.Batch(cmd, apply)
+		}
+	}
 	return m, cmd
 }
 
@@ -192,10 +214,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // headerLine), and, when a footer line is also showing, one more row for
 // that.
 func (m Model) listSize(footerLines int) (int, int) {
-	h, v := appStyle.GetFrameSize()
+	_, v := appStyle.GetFrameSize()
 	// -2: Model always shows the count line and the column-header line above
 	// the list (see View); footerLines is the optional rename/kill/error row.
-	return max(0, m.width-h), max(0, m.height-v-2-footerLines)
+	return m.contentWidth(), max(0, m.height-v-2-footerLines)
+}
+
+// contentWidth is the app's content width (the window minus appStyle's
+// horizontal frame) -- also handed to an open overlay's huh.Form so it
+// sizes to the real popup instead of huh's own 80-column default.
+func (m Model) contentWidth() int {
+	h, _ := appStyle.GetFrameSize()
+	return max(0, m.width-h)
 }
 
 // trimmedFilter wraps list.DefaultFilter to tolerate surrounding
@@ -245,18 +275,9 @@ func (m *Model) applyReload(sessions []session.Session) tea.Cmd {
 	return cmd
 }
 
+// handleKey is only reached with the list in focus -- Update routes ctrl+c
+// and an open overlay's keys elsewhere first (see Update/updateOverlay).
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if msg.Type == tea.KeyCtrlC {
-		return m, tea.Quit
-	}
-
-	switch m.mode {
-	case modeRename:
-		return m.handleRenameKey(msg)
-	case modeConfirmKill:
-		return m.handleConfirmKey(msg)
-	}
-
 	// Arrows scroll in EVERY state. bubbles/list disables its own CursorUp/
 	// CursorDown while the filter is being typed (list.go updateKeybindings),
 	// which would strand the user mid-filter, so drive the list's public nav
@@ -277,27 +298,25 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case msg.Type == tea.KeyEsc:
 		// esc closes the switcher outright -- a reflex tool opened dozens of
 		// times an hour; one key out beats a clear-then-quit two-step.
-		// Backspace clears typed filter text.
+		// Backspace clears typed filter text. (Esc inside an overlay means
+		// something different -- abort it -- and never reaches here, see
+		// Update.)
 		return m, tea.Quit
 
-	case key.Matches(msg, enterKey):
+	case key.Matches(msg, appKeys.Enter):
 		return m.selectOrCreate()
 
-	case key.Matches(msg, renameKey):
+	case key.Matches(msg, appKeys.Rename):
 		if s, ok := m.selected(); ok {
-			m.mode = modeRename
-			m.renameTarget = s.Name
-			m.renameInput.SetValue(s.Name)
-			m.renameInput.CursorEnd()
-			m.renameInput.Focus()
-			return m, textinput.Blink
+			m.overlay = renameOverlay(m.huhTheme, m.contentWidth(), s.Name, session.Rename)
+			return m, m.overlay.Init()
 		}
 		return m, nil
 
-	case key.Matches(msg, killKey):
+	case key.Matches(msg, appKeys.Kill):
 		if s, ok := m.selected(); ok {
-			m.mode = modeConfirmKill
-			m.killTarget = s.Name
+			m.overlay = killOverlay(m.huhTheme, m.contentWidth(), s.Name, session.Kill)
+			return m, m.overlay.Init()
 		}
 		return m, nil
 	}
@@ -382,40 +401,6 @@ func doAndReload(action func() error) tea.Cmd {
 	}
 }
 
-func (m Model) handleRenameKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "esc":
-		m.mode = modeList
-		m.renameInput.Blur()
-		return m, nil
-	case "enter":
-		newName := strings.TrimSpace(m.renameInput.Value())
-		old := m.renameTarget
-		m.mode = modeList
-		m.renameInput.Blur()
-		if newName == "" || newName == old {
-			return m, nil
-		}
-		return m, doAndReload(func() error { return session.Rename(old, newName) })
-	}
-
-	var cmd tea.Cmd
-	m.renameInput, cmd = m.renameInput.Update(msg)
-	return m, cmd
-}
-
-func (m Model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "y":
-		target := m.killTarget
-		m.mode, m.killTarget = modeList, ""
-		return m, doAndReload(func() error { return session.Kill(target) })
-	case "n", "esc":
-		m.mode, m.killTarget = modeList, ""
-	}
-	return m, nil
-}
-
 func (m Model) View() string {
 	lm := m.list
 	lm.SetSize(m.listSize(1)) // count + header (in listSize) + 1 footer line
@@ -462,17 +447,12 @@ func (m Model) headerLine() string {
 	return renderHeader(m.styles, m.delegate.showPeer)
 }
 
-// footerLine is the one line sessui always shows below the list: the rename
-// textinput, the kill confirmation, a surfaced error, or -- the normal case
-// -- the honest key hints.
+// footerLine is the one line sessui always shows below the list: the open
+// overlay (rename/kill), a surfaced error, or -- the normal case -- the
+// honest key hints.
 func (m Model) footerLine() string {
-	switch m.mode {
-	case modeRename:
-		return m.styles.Footer.Render("rename: ") + m.renameInput.View() +
-			m.styles.Help.Render("  (enter apply, esc cancel)")
-	case modeConfirmKill:
-		return m.styles.Error.Render(fmt.Sprintf("kill %s? ", m.killTarget)) +
-			m.styles.Footer.Render("(y/n)")
+	if m.overlay != nil {
+		return m.overlay.View()
 	}
 	if m.err != nil {
 		return m.styles.Error.Render("error: " + m.err.Error())
@@ -480,9 +460,11 @@ func (m Model) footerLine() string {
 	return m.helpLine()
 }
 
-// helpLine is the app's real controls, shown because the list's built-in help
-// is hidden (its hints don't match -- see New). No vim keys: letters feed the
-// filter, so the arrows are the nav.
+// helpLine is the app's real controls, shown because the list's built-in
+// help is hidden (its hints don't match -- see New). Rendered from appKeys
+// (keys.go) via bubbles/help instead of a hand-typed string, so the legend
+// can't drift from the bindings handleKey actually matches. No vim keys:
+// letters feed the filter, so the arrows are the nav.
 func (m Model) helpLine() string {
-	return m.styles.Help.Render("↑↓ move · type to filter · ⏎ switch · esc quit · ^r rename · ^x kill")
+	return m.help.ShortHelpView(appKeys.ShortHelp())
 }
