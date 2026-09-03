@@ -41,10 +41,41 @@ type reloadMsg struct {
 // Custom actions the list doesn't provide, surfaced in its own help view
 // via AdditionalShortHelpKeys/AdditionalFullHelpKeys and handled below.
 var (
-	enterKey  = key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "switch/create"))
-	renameKey = key.NewBinding(key.WithKeys("ctrl+r"), key.WithHelp("ctrl+r", "rename"))
-	killKey   = key.NewBinding(key.WithKeys("ctrl+x"), key.WithHelp("ctrl+x", "kill"))
+	enterKey       = key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "switch/create"))
+	renameKey      = key.NewBinding(key.WithKeys("ctrl+r"), key.WithHelp("ctrl+r", "rename"))
+	killKey        = key.NewBinding(key.WithKeys("ctrl+x"), key.WithHelp("ctrl+x", "kill"))
+	editColumnsKey = key.NewBinding(key.WithKeys("ctrl+e"), key.WithHelp("ctrl+e", "edit columns"))
 )
+
+// saveColumnConfig persists the user's column configuration to disk. Stubbed
+// behind a func var: internal/ui/config.go (Config/SaveConfig) doesn't exist
+// on this branch yet -- it's landing in parallel on master (see the column
+// editor task) -- so this is the one line to point at the real call once it
+// does.
+var saveColumnConfig = func(columns []columnSetting) error { return nil }
+
+// editorPreviewRows caps how many real session rows the column editor's live
+// preview draws -- enough to read as a table, not a full scroll of the list.
+const editorPreviewRows = 6
+
+// editorPreview is the column editor's preview closure (see coledit.go): the
+// SAME renderers the live list uses, over the first few real sessions, at
+// whatever layout the editor is currently trying -- so the user edits the
+// actual table, never a mockup.
+func (m Model) editorPreview(layout tableLayout) string {
+	lines := []string{renderHeader(m.styles, layout)}
+	now := time.Now()
+	for i, item := range m.list.Items() {
+		if i >= editorPreviewRows {
+			break
+		}
+		if it, ok := item.(sessionItem); ok {
+			c := cell{styles: m.styles, home: m.home, now: now, session: it.Session, spinner: m.spinner}
+			lines = append(lines, renderRow(layout, c, 0, false))
+		}
+	}
+	return strings.Join(lines, "\n")
+}
 
 var appStyle = lipgloss.NewStyle().Padding(1, 2)
 
@@ -53,6 +84,12 @@ type Model struct {
 	spinner  spinner.Model
 	delegate *rowDelegate // same pointer handed to list.New, so its spinner
 	// field can be kept in sync with Model's on every spinner.TickMsg.
+
+	// overlay is the column editor while it's up (ctrl+e), or nil. Per the
+	// overlay contract (see coledit.go's overlayDoneMsg), it owns the
+	// keyboard while non-nil: Update forwards every msg to it instead of
+	// handleKey, and View draws its screen instead of the list.
+	overlay *columnEditor
 
 	mode         mode
 	renameInput  textinput.Model
@@ -167,6 +204,25 @@ func reloadCmd() tea.Cmd {
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// The overlay owns the keyboard (and every other msg) while it's up --
+	// see the overlay field's doc comment.
+	if m.overlay != nil {
+		if done, ok := msg.(overlayDoneMsg); ok {
+			if done.Apply {
+				m.columns = m.overlay.Result()
+				if err := saveColumnConfig(m.columns); err != nil {
+					m.err = err
+				}
+				m.relayout()
+			}
+			m.overlay = nil
+			return m, nil
+		}
+		next, cmd := m.overlay.Update(msg)
+		m.overlay = next.(*columnEditor)
+		return m, cmd
+	}
+
 	switch msg := msg.(type) {
 	case tickMsg:
 		return m, tickCmd()
@@ -204,6 +260,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		if m.mode == modeList && key.Matches(msg, editColumnsKey) {
+			m.overlay = newColumnEditor(m.styles, m.columns, m.showPeer, m.usableWidth(), m.editorPreview)
+			return m, nil
+		}
 		return m.handleKey(msg)
 	}
 
@@ -445,6 +505,10 @@ func (m Model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) View() string {
+	if m.overlay != nil {
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, appStyle.Render(m.overlay.View()))
+	}
+
 	lm := m.list
 	lm.SetSize(m.listSize(1)) // count + header (in listSize) + 1 footer line
 
@@ -512,5 +576,5 @@ func (m Model) footerLine() string {
 // is hidden (its hints don't match -- see New). No vim keys: letters feed the
 // filter, so the arrows are the nav.
 func (m Model) helpLine() string {
-	return m.styles.Help.Render("↑↓ move · type to filter · ⏎ switch · esc quit · ^r rename · ^x kill")
+	return m.styles.Help.Render("↑↓ move · type to filter · ⏎ switch · esc quit · ^r rename · ^x kill · ^e columns")
 }
