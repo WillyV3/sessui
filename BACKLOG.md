@@ -4,7 +4,7 @@ One line each, ≤200 chars. Cleared continuously: when an item ships it moves
 to DECISIONS.md with the choice that was made and why. Nothing lives here
 forever — an item that stops mattering is deleted, not parked.
 
-- Header widget system (IN PROGRESS): `Widget`/`Controllable` interfaces, `widgetCatalog`, `header.widgets` config, `^w` focus + tab cycles expansion, header stays ONE line. Widgets: attention, now-playing, host, agents, shell.
+- now-playing widget (NEXT): `controllable`+`poller` on the shipped framework; transport keys refresh immediately via `tea.Sequence(exec, poll)`, not the 2s tick.
 - now-playing widget = thin client of `omarchy-shell media status|playPause|next|previous` (verified from /usr/share/omarchy/shell/plugins/services/media). No MPRIS code in sessui. Volume via `omarchy-audio-output-volume`.
 - now-playing on macOS: no omarchy-shell there; backend undecided until macbook1 is reachable to verify what it has. Widget hides itself when the shell IPC is absent.
 - cliamp has no MPRIS, so Omarchy's own bar can't see it either. Add MPRIS to cliamp (fixes it everywhere) vs a sessui special case. Willy decides.
