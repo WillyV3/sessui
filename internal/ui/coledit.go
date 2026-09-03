@@ -13,7 +13,8 @@ package ui
 //   space hide or show the selected column
 //   +/-   resize the selected column (no-op on the flex column, status)
 //   esc   apply and close -- or, while armed, just disarm
-// ctrl+r is the one non-verb: reset to the shipped defaults, "the way back."
+// Two non-verbs: ctrl+z abandons (close, apply nothing), ctrl+r resets to
+// the shipped defaults in place.
 //
 // Arm-to-move (rather than, say, a drag or a persistent "reorder mode") was
 // chosen because left/right already means "move the cursor" -- arming is
@@ -21,9 +22,10 @@ package ui
 // column," without stealing up/down for a job they don't need (see
 // GOTCHAS #5: this app doesn't do second meanings on an axis lightly).
 //
-// There is no cancel gesture on purpose: this editor is opened ~120x/hour by
-// a tool built to be fast, and a confirm step would be friction on every
-// single open. ctrl+r is the undo for a bad session.
+// There is no confirm step on purpose: this editor is opened ~120x/hour by
+// a tool built to be fast, and esc applying immediately keeps it that way.
+// Abandon exists because the owner asked for it after using it -- a way to
+// throw an edit away without a confirm on the way in.
 
 import (
 	"strings"
