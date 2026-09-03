@@ -33,9 +33,9 @@ var appKeys = keyMap{
 	// silently drop this from the legend.
 	Filter:  key.NewBinding(key.WithKeys("a-z"), key.WithHelp("a-z", "filter")),
 	Enter:   key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "switch/create")),
-	Rename:  key.NewBinding(key.WithKeys("ctrl+r"), key.WithHelp("ctrl+r", "rename")),
-	Kill:    key.NewBinding(key.WithKeys("ctrl+x"), key.WithHelp("ctrl+x", "kill")),
-	Columns: key.NewBinding(key.WithKeys("ctrl+e"), key.WithHelp("ctrl+e", "columns")),
+	Rename:  key.NewBinding(key.WithKeys("ctrl+r"), key.WithHelp("^r", "rename")),
+	Kill:    key.NewBinding(key.WithKeys("ctrl+x"), key.WithHelp("^x", "kill")),
+	Columns: key.NewBinding(key.WithKeys("ctrl+e"), key.WithHelp("^e", "columns")),
 	Quit:    key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "quit")),
 }
 

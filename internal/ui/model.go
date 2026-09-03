@@ -420,7 +420,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case key.Matches(msg, appKeys.Columns):
-		m.overlay = newColumnEditor(m.styles, m.columns, m.showPeer, session.PopupWidth(), m.editorPreview)
+		m.overlay = newColumnEditor(m.styles, m.columns, m.showPeer, m.usableWidth(), session.PopupWidth(), m.editorPreview)
 		return m, m.overlay.Init()
 	}
 

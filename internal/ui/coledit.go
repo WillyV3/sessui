@@ -102,20 +102,23 @@ type editorKeys struct {
 	reset   key.Binding
 }
 
+// Labels are short on purpose: the whole legend has to share one line with
+// the title at the shipped 108 columns, with no "…" -- a truncated legend
+// is a hidden key.
 func newEditorKeys() editorKeys {
 	return editorKeys{
 		rows:   key.NewBinding(key.WithKeys("up", "down"), key.WithHelp("↑↓", "row")),
-		move:   key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "select")),
-		arm:    key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "arm to move")),
+		move:   key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←→", "select")),
+		arm:    key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "arm")),
 		hide:   key.NewBinding(key.WithKeys(" "), key.WithHelp("space", "hide")),
 		resize: key.NewBinding(key.WithKeys("+", "=", "-", "_"), key.WithHelp("+/-", "resize")),
-		close:  key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "apply & close")),
+		close:  key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "apply")),
 		// abandon closes WITHOUT applying. ctrl+z reads as "undo", which is
 		// what the user means by it; ctrl+q/ctrl+s are terminal flow-control
 		// on some setups and ctrl+x already means kill in the list -- the
 		// same letter must not mean two things.
-		abandon: key.NewBinding(key.WithKeys("ctrl+z"), key.WithHelp("ctrl+z", "abandon")),
-		reset:   key.NewBinding(key.WithKeys("ctrl+r"), key.WithHelp("ctrl+r", "reset")),
+		abandon: key.NewBinding(key.WithKeys("ctrl+z"), key.WithHelp("^z", "abandon")),
+		reset:   key.NewBinding(key.WithKeys("ctrl+r"), key.WithHelp("^r", "reset")),
 	}
 }
 
@@ -139,8 +142,12 @@ type columnEditor struct {
 	// exact columnSetting.Width contract, so Result() is a direct read.
 	widths map[columnID]int
 
-	// popupWidth is the tmux popup width the table will get on its next
-	// open. usable() derives the row width the preview lays out against.
+	// width is the row width of the window the editor is IN right now --
+	// every line renders at this, so nothing can clip. popupWidth is the tmux
+	// popup width the user is setting for the NEXT open; it is only ever a
+	// number on the width row, never a layout width. An earlier build laid
+	// the page out at popupWidth and every line ran off the current popup.
+	width      int
 	popupWidth int
 
 	row         editorRow
@@ -151,12 +158,13 @@ type columnEditor struct {
 	abandoned   bool // it was ctrl+z: finish with nothing to apply
 }
 
-// newColumnEditor builds the editor over `current`'s configuration. preview
-// is Model's real renderer (renderHeader + renderRow over live sessions) --
-// the preview is production code, not a mockup. popupWidth is the width the
-// popup was opened at (see session.PopupWidth); the editor lets the user
-// change it for next time.
-func newColumnEditor(styles Styles, current []columnSetting, showPeer bool, popupWidth int, preview func(tableLayout) string) *columnEditor {
+// newColumnEditor builds the editor over `current`'s configuration. width is
+// the row width of the current window (Model.usableWidth); popupWidth is the
+// configured tmux popup width (session.PopupWidth), which the editor lets
+// the user change for next time. preview is Model's real renderer
+// (renderHeader + renderRow over live sessions) -- production code, not a
+// mockup.
+func newColumnEditor(styles Styles, current []columnSetting, showPeer bool, width, popupWidth int, preview func(tableLayout) string) *columnEditor {
 	hp := help.New()
 	// Tint bubbles/help onto the app's own palette instead of its baked-in
 	// greys -- Header and Help are already the right colours for "key" and
@@ -165,7 +173,7 @@ func newColumnEditor(styles Styles, current []columnSetting, showPeer bool, popu
 	hp.Styles.ShortDesc = styles.Help
 	hp.Styles.ShortSeparator = styles.Help
 
-	e := &columnEditor{styles: styles, showPeer: showPeer, preview: preview, keys: newEditorKeys(), help: hp, popupWidth: clampPopupWidth(popupWidth)}
+	e := &columnEditor{styles: styles, showPeer: showPeer, preview: preview, keys: newEditorKeys(), help: hp, width: width, popupWidth: clampPopupWidth(popupWidth)}
 	e.reset(current)
 	return e
 }
@@ -175,14 +183,6 @@ func clampPopupWidth(w int) int {
 		return popupWidthDefault
 	}
 	return min(max(w, popupWidthMin), popupWidthMax)
-}
-
-// usable is the row width the table has inside the popup at popupWidth:
-// the popup minus appStyle's Padding(1,2). The same arithmetic Model.listSize
-// does for the live list, so the preview here is what the next open shows.
-func (e *columnEditor) usable() int {
-	h, _ := appStyle.GetFrameSize()
-	return e.popupWidth - h
 }
 
 // reset rebuilds the editor from settings: the configured columns in their
@@ -465,7 +465,7 @@ func (e *columnEditor) ShortHelp() []key.Binding {
 	switch e.row {
 	case rowStrip:
 		if e.armed {
-			move.SetHelp("←/→", "swap")
+			move.SetHelp("←→", "swap")
 			arm.SetHelp("enter", "drop")
 			close.SetHelp("esc", "disarm")
 		}
@@ -597,20 +597,23 @@ func (e *columnEditor) renderShelf(width int) string {
 	return e.controlRow("add", strings.Join(chips, "   "), hint, width)
 }
 
-// renderWidthRow is the popup width control. Its hint says when the value
-// takes effect, because the popup you are looking at cannot resize itself.
+// renderWidthRow is the tmux popup width control -- captioned "popup" and
+// spelled out in the hint, because a user reading "width" next to a column
+// editor assumes a column. The value is stored in the @sessui-width tmux
+// option and takes effect on the next prefix+s; the popup you are looking
+// at cannot resize itself, and the hint says so.
 func (e *columnEditor) renderWidthRow(width int) string {
-	value := fmt.Sprintf("%d", e.popupWidth)
+	value := fmt.Sprintf("%d cols", e.popupWidth)
 	if e.row == rowWidth {
 		value = highlightCell(e.styles.selectedBG, e.styles.Header.Render(" "+value+" "))
 	} else {
 		value = e.styles.Muted.Render(value)
 	}
-	hint := "applies on next open"
+	hint := "tmux popup width · +/- to change · takes effect next open"
 	if e.popupWidth != popupWidthDefault {
-		hint = fmt.Sprintf("default %d · applies on next open", popupWidthDefault)
+		hint = fmt.Sprintf("tmux popup width · default %d · takes effect next open", popupWidthDefault)
 	}
-	return e.controlRow("width", value, hint, width)
+	return e.controlRow("popup", value, hint, width)
 }
 
 // padRight lays left flush-left and right flush-right on one line at width,
@@ -624,11 +627,11 @@ func padRight(left, right string, width int) string {
 	return left + strings.Repeat(" ", gap) + right
 }
 
-// View renders the editor's whole screen: a title band (the contextual help
-// line right-aligned), the strip, the shelf, the width row, a blank line,
-// then the live preview at the width the popup will have next time.
+// View renders the editor's whole screen at the CURRENT window width: a
+// title band (the contextual help line right-aligned), the strip, the shelf,
+// the popup-width row, a blank line, then the live preview.
 func (e *columnEditor) View() string {
-	width := e.usable()
+	width := e.width
 	title := e.styles.Header.Render("edit columns")
 	e.help.Width = max(width-lipgloss.Width(title)-1, 0)
 	band := padRight(title, e.help.View(e), width)

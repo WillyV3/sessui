@@ -88,9 +88,25 @@ configuration. Four more columns exist and can be added today by hand-editing
 (window count), `attached` (a client is on it right now), `machine` (the bound
 peer's machine, on its own).
 
-> **Not yet shipped — column editor:** an in-app settings UI to add, hide,
-> reorder, and resize columns without hand-editing JSON is in development on
-> an unmerged branch.
+### The column editor — `ctrl+e`
+
+The header row of the table is the editing surface; the real table redraws
+live underneath every edit. Three rows, `↑↓` picks which one you're on:
+
+| row       | what it is                                  | keys                                              |
+|-----------|---------------------------------------------|---------------------------------------------------|
+| **strip** | the visible columns, exactly as laid out    | `←→` select · `enter` arm, then `←→` swaps · `space` hide · `+/-` resize |
+| **add**   | hidden columns as chips — age, windows, attached, machine | `←→` select · `space` add (it returns to the slot it left) |
+| **popup** | the tmux popup width                        | `+/-` in steps of 4                               |
+
+`esc` applies and closes — there is no confirm step, on purpose. `ctrl+z`
+abandons (closes, applies nothing). `ctrl+r` resets everything to the
+shipped table and width.
+
+**Where the popup width lives:** the `popup` row writes the `@sessui-width`
+tmux option, the same one you can set in `tmux.conf`. It takes effect on the
+**next** `prefix + s` — the popup you're looking at can't resize itself, and
+the row says so. Columns are saved to `~/.config/sessui/config.json`.
 
 ## Keys
 
@@ -106,9 +122,10 @@ peer's machine, on its own).
 Letters feed the filter, so there are no vim (`j`/`k`) nav keys — the arrows are
 the nav.
 
-> **Not yet shipped — overlay UI:** rename and kill are moving from the plain
-> textinput/confirm above to a shared `huh`-backed overlay; the keys stay the
-> same, the shape of the prompt may change before it merges.
+Rename (`ctrl+r`) and kill (`ctrl+x`) are `huh` forms on the single footer
+line — the list stays in place above them, `esc` backs out with no side
+effect. The help line at the bottom is generated from the one keymap that
+also dispatches the keys, so it cannot drift from what the keys do.
 
 ## Requirements
 

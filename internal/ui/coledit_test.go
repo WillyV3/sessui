@@ -22,7 +22,7 @@ func idsPreview(l tableLayout) string {
 }
 
 func newTestEditor() *columnEditor {
-	return newColumnEditor(testStyles(), defaultColumnSettings(), true, defaultUsableWidth, idsPreview)
+	return newColumnEditor(testStyles(), defaultColumnSettings(), true, defaultUsableWidth, popupWidthDefault, idsPreview)
 }
 
 // keyMsg builds the tea.KeyMsg a real terminal would send for one of the
@@ -306,7 +306,7 @@ func equalColumnSettings(a, b []columnSetting) bool {
 func TestColumnEditor_PreviewSeesOnlyVisibleColumns(t *testing.T) {
 	var captured tableLayout
 	capture := func(l tableLayout) string { captured = l; return idsPreview(l) }
-	e := newColumnEditor(testStyles(), defaultColumnSettings(), true, defaultUsableWidth, capture)
+	e := newColumnEditor(testStyles(), defaultColumnSettings(), true, defaultUsableWidth, popupWidthDefault, capture)
 
 	e = press(t, e, "right", "space") // hide apps
 	e.View()
@@ -391,7 +391,7 @@ func TestColumnEditor_AbandonDiscards(t *testing.T) {
 		}
 	}
 	open := func() *columnEditor {
-		return newColumnEditor(testStyles(), defaultColumnSettings(), true, defaultUsableWidth, func(tableLayout) string { return "" })
+		return newColumnEditor(testStyles(), defaultColumnSettings(), true, defaultUsableWidth, popupWidthDefault, func(tableLayout) string { return "" })
 	}
 
 	t.Run("ctrl+z after a swap finishes with nil apply", func(t *testing.T) {
@@ -426,17 +426,17 @@ func TestColumnEditor_AbandonDiscards(t *testing.T) {
 // popup. Before this, all ten catalog columns shared the strip and status
 // collapsed to a stub while "windows" truncated to "wi".
 func TestColumnEditor_StripNeverWiderThanPopup(t *testing.T) {
-	e := newColumnEditor(testStyles(), defaultColumnSettings(), true, 112, func(tableLayout) string { return "" })
+	e := newColumnEditor(testStyles(), defaultColumnSettings(), true, defaultUsableWidth, 112, func(tableLayout) string { return "" })
 	for _, hide := range [][]string{{}, {"right", "space"}, {"right", "space", "space"}, {"down", "space", "space", "space"}} {
 		e.reset(defaultColumnSettings())
 		e = press(t, e, hide...)
-		layout := layoutColumns(e.visibleColumns(), e.usable())
-		if w := lipgloss.Width(e.renderStrip(layout)); w != e.usable() {
-			t.Errorf("after %v: strip width = %d, want exactly usable %d", hide, w, e.usable())
+		layout := layoutColumns(e.visibleColumns(), e.width)
+		if w := lipgloss.Width(e.renderStrip(layout)); w != e.width {
+			t.Errorf("after %v: strip width = %d, want exactly usable %d", hide, w, e.width)
 		}
 		for _, line := range strings.Split(e.View(), "\n") {
-			if w := lipgloss.Width(line); w > e.usable() {
-				t.Errorf("after %v: a View line is %d wide, past usable %d: %q", hide, w, e.usable(), line)
+			if w := lipgloss.Width(line); w > e.width {
+				t.Errorf("after %v: a View line is %d wide, past usable %d: %q", hide, w, e.width, line)
 			}
 		}
 	}
@@ -446,7 +446,7 @@ func TestColumnEditor_StripNeverWiderThanPopup(t *testing.T) {
 // columns not in the shipped table start on the shelf; ↓ reaches it, ←/→
 // selects a chip, space shows it -- it appears in the strip and in Result().
 func TestColumnEditor_ShelfAddsAColumn(t *testing.T) {
-	e := newColumnEditor(testStyles(), defaultColumnSettings(), true, 112, func(tableLayout) string { return "" })
+	e := newColumnEditor(testStyles(), defaultColumnSettings(), true, defaultUsableWidth, 112, func(tableLayout) string { return "" })
 	if e.row != rowStrip {
 		t.Fatalf("opens on row %d, want the strip", e.row)
 	}
@@ -476,7 +476,7 @@ func TestColumnEditor_ShelfAddsAColumn(t *testing.T) {
 // TestColumnEditor_PopupWidth: the width row adjusts in steps, clamps, and
 // rides out on the apply msg; ctrl+r puts it back to the default.
 func TestColumnEditor_PopupWidth(t *testing.T) {
-	e := newColumnEditor(testStyles(), defaultColumnSettings(), true, 112, func(tableLayout) string { return "" })
+	e := newColumnEditor(testStyles(), defaultColumnSettings(), true, defaultUsableWidth, 112, func(tableLayout) string { return "" })
 	e = press(t, e, "down", "down") // strip -> shelf -> width
 	if e.row != rowWidth {
 		t.Fatalf("row = %d, want the width row", e.row)
@@ -497,9 +497,34 @@ func TestColumnEditor_PopupWidth(t *testing.T) {
 		t.Errorf("applied popupWidth = %d, want %d", got, popupWidthMax)
 	}
 
-	e = newColumnEditor(testStyles(), defaultColumnSettings(), true, 140, func(tableLayout) string { return "" })
+	e = newColumnEditor(testStyles(), defaultColumnSettings(), true, defaultUsableWidth, 140, func(tableLayout) string { return "" })
 	e = press(t, e, "ctrl+r")
 	if e.popupWidth != popupWidthDefault {
 		t.Errorf("ctrl+r left popupWidth at %d, want %d", e.popupWidth, popupWidthDefault)
+	}
+}
+
+// TestColumnEditor_RendersAtTheWindowNotTheSetting pins the overflow the
+// owner hit: with @sessui-width raised to 140 while the popup was still 112,
+// every editor line rendered at 136 and tmux clipped the legend and hints.
+// The page must lay out at the window it is IN; the popup width is only a
+// number on its row. And the legend must fit without "…" at the shipped
+// width on every row -- a truncated legend is a hidden key.
+func TestColumnEditor_RendersAtTheWindowNotTheSetting(t *testing.T) {
+	e := newColumnEditor(testStyles(), defaultColumnSettings(), true, defaultUsableWidth, popupWidthMax, func(tableLayout) string { return "preview" })
+	for _, row := range []string{"strip", "shelf", "popup"} {
+		lines := strings.Split(e.View(), "\n")
+		for i, line := range lines {
+			if w := lipgloss.Width(line); w > defaultUsableWidth {
+				t.Errorf("%s row, line %d is %d wide, past the window's %d: %q", row, i, w, defaultUsableWidth, line)
+			}
+		}
+		if band := lines[0]; strings.Contains(band, "…") || !strings.Contains(band, "abandon") {
+			t.Errorf("%s row: legend truncated or missing abandon: %q", row, band)
+		}
+		e = press(t, e, "down")
+	}
+	if !strings.Contains(e.View(), "240 cols") || !strings.Contains(e.View(), "tmux popup width") {
+		t.Errorf("popup row must show the setting and name what it is:\n%s", e.View())
 	}
 }
