@@ -241,36 +241,54 @@ func TestColumnEditor_Reset(t *testing.T) {
 	}
 }
 
-// TestColumnEditor_Esc covers both esc behaviours in one place: while armed
-// it only disarms (the editor stays open, no message is returned), and
-// otherwise it applies and closes via overlayDoneMsg{Apply: true} -- the
-// contract Model's overlay forwarding depends on.
+// TestColumnEditor_Esc covers both esc behaviours in one place, against the
+// pull-based overlayResult contract (result()): while armed esc only
+// disarms (the editor stays unfinished), and otherwise it finishes, and
+// result()'s apply Cmd resolves to a columnsAppliedMsg carrying Result().
 func TestColumnEditor_Esc(t *testing.T) {
 	t.Run("armed: only disarms", func(t *testing.T) {
 		e := newTestEditor()
 		e = press(t, e, "right", "enter")
-		next, cmd := e.Update(keyMsg("esc"))
-		e = next.(*columnEditor)
+		e = press(t, e, "esc")
 		if e.armed {
 			t.Error("esc while armed left armed=true")
 		}
-		if cmd != nil {
-			t.Error("esc while armed returned a cmd; it must not close the editor")
+		if finished, apply := e.result(); finished || apply != nil {
+			t.Errorf("esc while armed: result() = (%v, %v), want (false, nil) -- it must not close the editor", finished, apply)
 		}
 	})
 
-	t.Run("unarmed: applies and closes", func(t *testing.T) {
+	t.Run("unarmed: finishes and applies", func(t *testing.T) {
 		e := newTestEditor()
-		_, cmd := e.Update(keyMsg("esc"))
-		if cmd == nil {
-			t.Fatal("esc unarmed returned a nil cmd, want the close-and-apply cmd")
+		e = press(t, e, "esc")
+
+		finished, apply := e.result()
+		if !finished {
+			t.Fatal("esc unarmed did not finish the editor")
 		}
-		msg := cmd()
-		done, ok := msg.(overlayDoneMsg)
-		if !ok || !done.Apply {
-			t.Fatalf("esc unarmed cmd() = %#v, want overlayDoneMsg{Apply: true}", msg)
+		if apply == nil {
+			t.Fatal("result() returned a nil apply cmd, want one that resolves to columnsAppliedMsg")
+		}
+		msg, ok := apply().(columnsAppliedMsg)
+		if !ok {
+			t.Fatalf("apply() = %#v, want columnsAppliedMsg", msg)
+		}
+		if want := e.Result(); !equalColumnSettings(msg.columns, want) {
+			t.Errorf("columnsAppliedMsg.columns = %v, want %v", msg.columns, want)
 		}
 	})
+}
+
+func equalColumnSettings(a, b []columnSetting) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // TestColumnEditor_PreviewSeesOnlyVisibleColumns is the explicit contract

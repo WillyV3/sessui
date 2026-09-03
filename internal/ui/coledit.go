@@ -34,13 +34,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// overlayDoneMsg is how an overlay hands control back to Model: Apply=false
-// means the user backed out and nothing should be kept. This mirrors the
-// mode-enum replacement landing concurrently on another branch (see the
-// task's overlay contract) -- defined here so this package builds and tests
-// standalone; reconcile/dedupe with overlay.go's copy at merge.
-type overlayDoneMsg struct{ Apply bool }
-
 // glyphArmed marks the column currently armed for moving -- distinct from
 // every column's own glyph, so "this one is grabbed" reads without first
 // learning a colour. Verified present in JetBrainsMono Nerd Font:
@@ -82,9 +75,9 @@ func newEditorKeys() editorKeys {
 }
 
 // columnEditor is the WYSIWYG column editor overlay (see the package doc
-// above). It owns the keyboard while it's up and ends itself by returning
-// overlayDoneMsg{Apply: true} from Update -- there is deliberately no path
-// that returns Apply: false; see esc's handling below.
+// above). It owns the keyboard while it's up and reports itself done via
+// result() (the pull-based overlayResult contract in overlay.go) -- there is
+// deliberately no path that discards the edit; see esc's handling below.
 type columnEditor struct {
 	styles   Styles
 	showPeer bool
@@ -106,8 +99,9 @@ type columnEditor struct {
 	// exact columnSetting.Width contract, so Result() is a direct read.
 	widths map[columnID]int
 
-	cursor int  // index into order
-	armed  bool // enter arms the selected column for a swap-move
+	cursor   int  // index into order
+	armed    bool // enter arms the selected column for a swap-move
+	finished bool // an unarmed esc was pressed -- see result()
 }
 
 // newColumnEditor builds the editor over `current`'s configuration. preview
@@ -207,8 +201,8 @@ func (e *columnEditor) visibleColumns() []column {
 }
 
 // Result is the edited settings: visible columns only, in strip order, each
-// carrying its width override (0 = catalog default). What Model persists on
-// overlayDoneMsg{Apply: true}.
+// carrying its width override (0 = catalog default). What result()'s apply
+// Cmd hands Model once the editor is finished.
 func (e *columnEditor) Result() []columnSetting {
 	out := make([]columnSetting, 0, len(e.order))
 	for _, id := range e.order {
@@ -263,10 +257,6 @@ func (e *columnEditor) selectionIsFlex() bool {
 	return columnCatalog[e.order[e.cursor]].width == 0
 }
 
-// closeAndApply is esc's tea.Cmd when not armed. See the package doc: there
-// is no cancel gesture, on purpose.
-func closeAndApply() tea.Msg { return overlayDoneMsg{Apply: true} }
-
 func (e *columnEditor) Init() tea.Cmd { return nil }
 
 func (e *columnEditor) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -295,9 +285,21 @@ func (e *columnEditor) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			e.armed = false
 			return e, nil
 		}
-		return e, closeAndApply
+		e.finished = true // see result(): there is no cancel gesture, on purpose
 	}
 	return e, nil
+}
+
+// result satisfies overlay.go's pull-based overlayResult contract: the
+// editor is finished only after an unarmed esc (never by ctrl+r, which
+// resets in place without closing), and its apply Cmd captures the current
+// Result() into a columnsAppliedMsg for Model to persist and relayout from.
+func (e *columnEditor) result() (finished bool, apply tea.Cmd) {
+	if !e.finished {
+		return false, nil
+	}
+	settings := e.Result()
+	return true, func() tea.Msg { return columnsAppliedMsg{columns: settings} }
 }
 
 // ShortHelp/FullHelp make columnEditor itself a help.KeyMap: the SAME five

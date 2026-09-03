@@ -38,6 +38,13 @@ type reloadMsg struct {
 	err      error
 }
 
+// columnsAppliedMsg is the column editor's apply Cmd result (see coledit.go's
+// result()): the edited settings, ready for Model to persist and relayout
+// from. Kept overlay-agnostic on purpose -- the editor never touches Model
+// internals directly, the same shape rename/kill already use via
+// doAndReload's Cmd-returns-a-msg pattern.
+type columnsAppliedMsg struct{ columns []columnSetting }
+
 // Custom actions the list doesn't provide, surfaced in its own help view
 // via AdditionalShortHelpKeys/AdditionalFullHelpKeys and handled below.
 var (
@@ -85,10 +92,16 @@ type Model struct {
 	delegate *rowDelegate // same pointer handed to list.New, so its spinner
 	// field can be kept in sync with Model's on every spinner.TickMsg.
 
-	// overlay is the column editor while it's up (ctrl+e), or nil. Per the
-	// overlay contract (see coledit.go's overlayDoneMsg), it owns the
-	// keyboard while non-nil: Update forwards every msg to it instead of
-	// handleKey, and View draws its screen instead of the list.
+	// overlay is the column editor while it's up (ctrl+e), or nil.
+	//
+	// integration: replaced by overlay.go at merge (owner: overlay-huh) --
+	// that branch owns the real tea.Model-typed field, the generic
+	// overlayResult forwarding loop, and rendering an overlay in the footer
+	// band. This is a minimal stand-in so coledit.go can be exercised and
+	// visually verified end to end while that branch is still landing: it
+	// forwards every msg to the editor and polls its pull-based result()
+	// (see coledit.go) instead of the footer, because the column editor
+	// replaces the LIST BODY while up, not the footer.
 	overlay *columnEditor
 
 	mode         mode
@@ -204,26 +217,30 @@ func reloadCmd() tea.Cmd {
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	// The overlay owns the keyboard (and every other msg) while it's up --
-	// see the overlay field's doc comment.
+	// integration: replaced by overlay.go's generic forwarding loop at merge
+	// (see the overlay field's doc comment). Forward every msg to the editor,
+	// then pull its result(): finished=true is the ONLY exit (esc, never
+	// ctrl+r), and its apply Cmd -- run here, not inline -- is what actually
+	// carries the edit back as a columnsAppliedMsg below.
 	if m.overlay != nil {
-		if done, ok := msg.(overlayDoneMsg); ok {
-			if done.Apply {
-				m.columns = m.overlay.Result()
-				if err := saveColumnConfig(m.columns); err != nil {
-					m.err = err
-				}
-				m.relayout()
-			}
-			m.overlay = nil
-			return m, nil
-		}
 		next, cmd := m.overlay.Update(msg)
 		m.overlay = next.(*columnEditor)
+		if finished, apply := m.overlay.result(); finished {
+			m.overlay = nil
+			return m, apply
+		}
 		return m, cmd
 	}
 
 	switch msg := msg.(type) {
+	case columnsAppliedMsg:
+		m.columns = msg.columns
+		if err := saveColumnConfig(m.columns); err != nil {
+			m.err = err
+		}
+		m.relayout()
+		return m, nil
+
 	case tickMsg:
 		return m, tickCmd()
 
