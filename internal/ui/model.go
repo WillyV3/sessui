@@ -116,7 +116,12 @@ func New() Model {
 	ti.CharLimit = 128
 	ti.Width = 40
 
-	m := Model{list: l, spinner: sp, delegate: delegate, renameInput: ti, home: home, styles: styles, columns: defaultColumnSettings()}
+	// A corrupt config is surfaced in the footer rather than fatal: the
+	// user still gets a working table (LoadConfig returns defaults on any
+	// failure) and can see why their layout came back as the shipped one.
+	cfg, cfgErr := LoadConfig()
+
+	m := Model{list: l, spinner: sp, delegate: delegate, renameInput: ti, home: home, styles: styles, columns: cfg.Columns, err: cfgErr}
 	m.relayout()
 	return m
 }
