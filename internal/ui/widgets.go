@@ -19,10 +19,8 @@ package ui
 // widget, Omarchy-plugin style -- name it in config, done.
 
 import (
-	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"sort"
 	"strings"
 	"time"
@@ -76,9 +74,9 @@ type poller interface {
 // widgets -- a clock and a battery -- each get their own result, and Model
 // dispatches without a lookup.
 type widgetPollMsg struct {
-	src    poller
-	output string
-	err    error
+	src  poller
+	data any
+	err  error
 }
 
 // widgetSetting is one configured widget: its catalog name and any args.
@@ -103,13 +101,13 @@ func (h HeaderConfig) widgets() []widgetSetting {
 	return h.Widgets
 }
 
-// defaultHeaderWidgets is the header a fresh install shows. now-playing
+// defaultHeaderWidgets is the header a fresh install shows. audio
 // sits left of the attention pills and hides itself when nothing plays (and
 // on a box without omarchy-shell), so the count line stays byte-identical to
 // before widgets existed until there is something to show. ^w lands on
-// now-playing first -- the widget with controls is the one you focus for.
+// audio first -- the widget with controls is the one you focus for.
 func defaultHeaderWidgets() []widgetSetting {
-	return []widgetSetting{{Name: "now-playing"}, {Name: "attention"}}
+	return []widgetSetting{{Name: "audio"}, {Name: "attention"}}
 }
 
 // namedWidget pairs a catalog name with an instance so Model can route a
@@ -128,8 +126,9 @@ var widgetCatalog = map[string]func(args map[string]string) (widget, error){
 	"host":      newHostWidget,
 	"agents":    func(map[string]string) (widget, error) { return agentsWidget{}, nil },
 	"shell":     newShellWidget,
-	// now-playing lives in nowplaying.go: Omarchy's media service as a widget.
-	"now-playing": newNowPlayingWidget,
+	// audio lives in audio.go: the PipeWire graph plus Omarchy's media service.
+	"audio":       newAudioWidget,
+	"now-playing": newAudioWidget, // the name it shipped under for a day
 }
 
 // resolveWidgets turns settings into widgets, in order. An unknown name is
@@ -322,14 +321,15 @@ func (w *shellWidget) expand(st widgetState, width int) string {
 
 func (w *shellWidget) poll() tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), widgetExecTimeout)
+		cmd, cancel := widgetCommand("sh", "-c", w.cmd)
 		defer cancel()
-		out, err := exec.CommandContext(ctx, "sh", "-c", w.cmd).Output()
+		out, err := cmd.Output()
 		first, _, _ := strings.Cut(strings.TrimSpace(string(out)), "\n")
-		return widgetPollMsg{src: w, output: first, err: err}
+		return widgetPollMsg{src: w, data: first, err: err}
 	}
 }
 
 func (w *shellWidget) absorb(msg widgetPollMsg) {
-	w.output, w.err = msg.output, msg.err
+	w.output, _ = msg.data.(string)
+	w.err = msg.err
 }

@@ -19,6 +19,7 @@ func withMedia(t *testing.T, available bool) {
 func TestResolveWidgets(t *testing.T) {
 	t.Run("every catalog name resolves", func(t *testing.T) {
 		withMedia(t, true)
+		withAudio(t, true)
 		var settings []widgetSetting
 		for _, n := range widgetNames() {
 			settings = append(settings, widgetSetting{Name: n, Args: map[string]string{"cmd": "true"}})
@@ -42,8 +43,8 @@ func TestResolveWidgets(t *testing.T) {
 		}
 	})
 
-	t.Run("a box without omarchy-shell gets no now-playing widget and no error", func(t *testing.T) {
-		withMedia(t, false)
+	t.Run("a box without pipewire gets no audio widget and no error", func(t *testing.T) {
+		withAudio(t, false)
 		ws, err := resolveWidgets(defaultHeaderWidgets())
 		if err != nil {
 			t.Fatalf("resolveWidgets(defaults) on a Mac: %v", err)
@@ -171,7 +172,7 @@ func TestShellWidget(t *testing.T) {
 	t.Run("expand truncates to width", func(t *testing.T) {
 		w, _ := newShellWidget(map[string]string{"cmd": "true"})
 		sw := w.(*shellWidget)
-		sw.absorb(widgetPollMsg{output: strings.Repeat("x", 200)})
+		sw.absorb(widgetPollMsg{data: strings.Repeat("x", 200)})
 		if got := sw.expand(widgetState{styles: styles}, 20); len([]rune(got)) > 20 {
 			t.Errorf("expand at 20 = %d runes: %q", len([]rune(got)), got)
 		}
@@ -204,7 +205,7 @@ func TestHeaderConfig_DefaultIsNeverPersisted(t *testing.T) {
 	if len(c.Header.Widgets) != 0 {
 		t.Errorf("withDefaults filled Header.Widgets = %v; it must stay empty", c.Header.Widgets)
 	}
-	if got := c.Header.widgets(); len(got) != 2 || got[0].Name != "now-playing" || got[1].Name != "attention" {
+	if got := c.Header.widgets(); len(got) != 2 || got[0].Name != "audio" || got[1].Name != "attention" {
 		t.Errorf("widgets() = %v, want the shipped default", got)
 	}
 	chosen := HeaderConfig{Widgets: []widgetSetting{{Name: "host"}}}
@@ -228,4 +229,33 @@ func TestConfig_UnchosenHeaderIsAbsentFromTheFile(t *testing.T) {
 	if strings.Contains(string(data), `"header"`) {
 		t.Errorf("config.json carries a header key with nothing chosen:\n%s", data)
 	}
+}
+
+// withAudio pins the PipeWire probe for a test and restores it after.
+func withAudio(t *testing.T, available bool) {
+	t.Helper()
+	was := audioAvailable
+	audioAvailable = available
+	t.Cleanup(func() { audioAvailable = was })
+}
+
+func TestResolveWidgets_AudioAvailability(t *testing.T) {
+	t.Run("no pipewire: audio is absent, attention alone", func(t *testing.T) {
+		withAudio(t, false)
+		ws, err := resolveWidgets(defaultHeaderWidgets())
+		if err != nil || len(ws) != 1 || ws[0].name != "attention" {
+			t.Errorf("widgets = %v err=%v, want attention alone", ws, err)
+		}
+	})
+	t.Run("pipewire without omarchy: audio present, no transport", func(t *testing.T) {
+		withAudio(t, true)
+		withMedia(t, false)
+		ws, err := resolveWidgets(defaultHeaderWidgets())
+		if err != nil || len(ws) != 2 || ws[0].name != "audio" {
+			t.Fatalf("widgets = %v err=%v, want audio then attention", ws, err)
+		}
+		if aw := ws[0].widget.(*audioWidget); aw.media != nil || len(aw.keys()) != 3 {
+			t.Errorf("without omarchy-shell the audio widget must have no media client and only pick/vol/mute keys; got media=%v keys=%d", aw.media, len(aw.keys()))
+		}
+	})
 }

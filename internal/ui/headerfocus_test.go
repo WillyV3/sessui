@@ -90,8 +90,8 @@ func testHelp() help.Model { return help.New() }
 // TestHeaderFocus_LegendFitsTheFooter: the widest shipped legend -- the
 // transport plus the three focus keys -- fits the default row untruncated.
 func TestHeaderFocus_LegendFitsTheFooter(t *testing.T) {
-	np := &nowPlayingWidget{client: &fakeMedia{}, available: true}
-	h := newHeaderFocus([]namedWidget{{name: "now-playing", widget: np}}, testHelp())
+	np := &audioWidget{pw: &fakeAudio{}, media: &fakeMedia{}}
+	h := newHeaderFocus([]namedWidget{{name: "audio", widget: np}}, testHelp())
 	legend := h.View()
 	if w := lipgloss.Width(legend); w > defaultUsableWidth {
 		t.Errorf("legend is %d wide, exceeds %d: %q", w, defaultUsableWidth, legend)

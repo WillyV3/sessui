@@ -138,13 +138,16 @@ shows what they are.
 | `host`      | the short hostname            | hostname · session count                      |
 | `agents`    | `working/idle` counts, hidden with no agents | `2 working · 8 idle · 1 need you` |
 | `shell`     | `args.icon` (default `$`)     | the first line of `args.cmd`'s output          |
-| `now-playing` | a note while a player has media, hidden otherwise | `▶ Artist – Title · player`, with a transport: `space` play/pause · `←→` track · `+/-` volume · `m` mute · `s` source |
+| `audio`     | ` 65%` — the note and the master volume, live while anything is audible | every outgoing stream as a chip: `out 65%  Chromium 100%  cliamp muted` — `←→` pick one · `+/-` its volume · `m` mute it · `space` play/pause and `[ ]` prev/next when the picked app has a track |
 
-`now-playing` is a thin client of Omarchy's own media service
-(`omarchy-shell media status|playPause|next|previous|sourceNext` and
-`omarchy-audio-output-volume`), so it controls whatever Omarchy's bar
-controls — every player, no MPRIS code in sessui. On a box without
-`omarchy-shell` (a Mac) it hides itself.
+`audio` reads the PipeWire graph (`pw-dump`) — so it sees **all** outgoing
+audio, MPRIS or not: cliamp, a browser tab, a game — and turns each knob
+with `wpctl` by node id. The master (`out`) goes through
+`omarchy-audio-output-volume` when Omarchy is present so the desktop OSD
+fires. The track line and the transport come from Omarchy's media service
+(`omarchy-shell media`) and appear only for the app it is playing in (or
+when `out` is picked). No PipeWire (a Mac) — the widget is absent;
+`now-playing` in a config is an alias for it.
 
 `shell` is the plugin escape hatch — any command, run on the 2 s refresh
 with a 1.5 s timeout, off the UI thread. Two are fine; each keeps its own

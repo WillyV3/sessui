@@ -108,7 +108,7 @@ func TestRenderHeaderLine_Default(t *testing.T) {
 }
 
 // TestRenderHeaderLine_DefaultIsByteIdenticalToLegacy pins the promise made
-// when widgets were introduced: with the shipped config (now-playing silent,
+// when widgets were introduced: with the shipped config (audio silent,
 // nothing focused) the count line is exactly what it was before -- the
 // tally, a run of spaces, the pills flush right at width.
 func TestRenderHeaderLine_DefaultIsByteIdenticalToLegacy(t *testing.T) {
@@ -141,7 +141,7 @@ func TestRenderHeaderLine_OneLineAtEveryFocus(t *testing.T) {
 		t.Fatalf("resolveWidgets: %v", err)
 	}
 	// Give the shell widget something long to expand so truncation is exercised.
-	widgets[3].widget.(*shellWidget).absorb(widgetPollMsg{output: strings.Repeat("x", 300)})
+	widgets[3].widget.(*shellWidget).absorb(widgetPollMsg{data: strings.Repeat("x", 300)})
 	widgets = append(widgets, namedWidget{name: "rude", widget: rudeWidget{}})
 
 	sessions := attentionFixture(14, 2, 1)
