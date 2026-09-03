@@ -105,16 +105,14 @@ still queries all 11 slots — that part is unavoidable and correct, the fix
 was only for the "not present" case. Don't reintroduce a per-slot query with
 no availability check in front of it.
 
-### 15. A config-load error is overwritten by the very next successful reload
-`LoadConfig`'s parse error IS threaded into `Model.err` at startup, and
-`footerLine` does render `"error: ..."` for it — but `Update`'s `reloadMsg`
-case unconditionally sets `m.err = nil` on any successful `session.List()`
-(`model.go`, the `case reloadMsg` block), and that reload fires as part of
-`Init()` within the first tick. Verified live: a config with invalid JSON
-still opens straight to the normal help line, not the error, by ~1s in.
-In practice a corrupt `config.json` degrades to defaults correctly, but the
-footer notice explaining why is on screen for at most one frame and is not a
-reliable way for a user to actually see it. Known, not fixed here — a
-config-load error needs to survive a session-reload success (a separate
-field, or `reloadMsg` preserving a pre-existing non-reload error) before the
-footer claim in `config.go`'s doc comment is true in practice.
+### 15. A config-load error is NOT `m.err`
+`m.err` is cleared by every successful reload (`case reloadMsg`), and the
+first reload fires inside `Init()` — so anything parked there at startup is
+on screen for one frame. A corrupt `config.json` used to be exactly that: it
+degraded to defaults correctly, but the footer notice explaining why was
+gone before the user could read it (found by the docs pass, verified live).
+It now lives in its own field, `Model.configErr`, which `footerLine` renders
+ahead of `m.err` and which only a later successful `SaveConfig` clears.
+Pinned by `TestConfigError_SurvivesReload`. Don't route a durable, user-
+actionable error through `m.err`; that field is for the last transient
+failure only.

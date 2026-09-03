@@ -81,6 +81,12 @@ type Model struct {
 	// live copy the layout reads. Kept so a column-editor apply can save the
 	// whole file back without losing the icon/theme choices it doesn't edit.
 	cfg Config
+	// configErr is a config.json that exists but did not parse. It is its own
+	// field, not m.err, because m.err is cleared by every successful reload
+	// (~1s) -- which meant this notice was on screen for one frame and the
+	// user never learned why their layout came back as the shipped one. It
+	// clears only when a later save succeeds (see columnsAppliedMsg).
+	configErr error
 
 	err           error
 	home          string
@@ -145,7 +151,7 @@ func New() Model {
 	m := Model{
 		list: l, spinner: sp, delegate: delegate, home: home, styles: styles,
 		huhTheme: newHuhTheme(palette), help: newHelp(palette),
-		cfg: cfg, columns: cfg.Columns, err: cfgErr,
+		cfg: cfg, columns: cfg.Columns, configErr: cfgErr,
 	}
 	m.relayout()
 	return m
@@ -207,6 +213,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.cfg.Columns = msg.columns
 		if err := SaveConfig(m.cfg); err != nil {
 			m.err = err
+		} else {
+			m.configErr = nil // a good write replaces whatever failed to parse
 		}
 		m.relayout()
 		return m, nil
@@ -563,6 +571,12 @@ func (m Model) headerLine() string {
 func (m Model) footerLine() string {
 	if m.overlay != nil {
 		return m.overlay.View()
+	}
+	// A config that failed to parse outranks a transient reload error: it is
+	// durable, it is the user's own file, and it explains why their layout
+	// is not the one they saved.
+	if m.configErr != nil {
+		return m.styles.Error.Render("config: " + m.configErr.Error())
 	}
 	if m.err != nil {
 		return m.styles.Error.Render("error: " + m.err.Error())
