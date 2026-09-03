@@ -199,9 +199,12 @@ also dispatches the keys, so it cannot drift from what the keys do.
   paints once and won't animate.
 - **Go 1.21+** — to build the binary (install and update only); it fetches
   the module's own toolchain version automatically.
-- A **Nerd Font** in your terminal for the app / column icons — or set
-  `"icons": "ascii"` in the [config file](#config-file) if you don't have one
-  (the usual Mac case).
+- A **Nerd Font** in your terminal for the app / column icons — or pick
+  `ascii` on the **icons** row of settings (`ctrl+e`) if you don't have one
+  (the usual Mac case). ASCII mode is a design, not a fallback: column
+  headers read as plain labels, and every app is a two-letter tag — `cl`
+  claude, `nv` neovim, `gt` git, `dk` docker, `sp` spotify — unique across
+  the set so a row of apps stays aligned.
 
 The peer column is hidden outright when [claude-peers] is not on the
 network — not blank, absent — and everything else works the same.

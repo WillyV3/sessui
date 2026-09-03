@@ -365,12 +365,12 @@ func trackTitle(m mediaStatus) string {
 // "0%" that means "not asked yet" would be a lie for a whole frame.
 func (w *audioWidget) icon(st widgetState) string {
 	if w.err != nil {
-		return st.styles.Error.Render(glyphU(glyphNote))
+		return st.styles.Error.Render(glyphOr(glyphNote, "vol"))
 	}
 	if w.snap.graph.Sink.ID == 0 {
 		return ""
 	}
-	label := glyphU(glyphNote) + " " + percent(w.snap.graph.Sink)
+	label := glyphOr(glyphNote, "vol") + " " + percent(w.snap.graph.Sink)
 	if w.playing() {
 		return st.styles.Working.Render(label)
 	}

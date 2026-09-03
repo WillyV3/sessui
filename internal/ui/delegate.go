@@ -269,7 +269,15 @@ func renderPeer(styles Styles, s session.Session) string {
 // otherwise. Every other app in the session always renders its static
 // icon, unaffected by agent state.
 func renderIcons(s session.Session, sp spinner.Model) string {
-	slot := lipgloss.NewStyle().Width(iconSlotWidth)
+	// An ASCII tag is two cells wide and needs its own gap, so its slot is
+	// one wider than a Nerd glyph's; the column is then cut to its layout
+	// width like any other cell, so the shipped width shows two tags and a
+	// widened apps column (settings) shows the third.
+	width := iconSlotWidth
+	if activeGlyphs == glyphsASCII {
+		width++
+	}
+	slot := lipgloss.NewStyle().Width(width)
 	slots := make([]string, maxIcons)
 	for i := range slots {
 		if i < len(s.Apps) {
@@ -279,7 +287,7 @@ func renderIcons(s session.Session, sp spinner.Model) string {
 			slots[i] = slot.Render("")
 		}
 	}
-	return lipgloss.NewStyle().Width(iconColWidth).Render(lipgloss.JoinHorizontal(lipgloss.Top, slots...))
+	return lipgloss.NewStyle().Width(maxIcons * width).Render(lipgloss.JoinHorizontal(lipgloss.Top, slots...))
 }
 
 func renderIcon(icon Icon, state session.AgentState, isAgent bool, sp spinner.Model) string {

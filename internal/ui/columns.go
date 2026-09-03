@@ -36,6 +36,10 @@ type column struct {
 	id    columnID
 	label string
 	glyph rune // header glyph codepoint; 0 = label only
+	// asciiLabel stands in for a glyph-only header when the glyph set is
+	// ASCII (where headers carry no glyph at all): a short word that fits
+	// the column, so "active" and "attached" do not become blank headers.
+	asciiLabel string
 	// width is the fixed cell width, or 0 for the single flex column.
 	width int
 	// minWidth is the narrowest a user may resize this column to. Resizing
@@ -118,7 +122,7 @@ var columnCatalog = map[columnID]column{
 		render: func(c cell) string { return renderIcons(c.session, c.spinner) },
 	},
 	colActive: {
-		id: colActive, label: "", glyph: glyphActive, width: 5, minWidth: 4,
+		id: colActive, label: "", glyph: glyphActive, asciiLabel: "ago", width: 5, minWidth: 4,
 		render: func(c cell) string {
 			since := c.now.Sub(c.session.Activity)
 			return c.styles.activeHeat(since).Render(session.LastActive(c.session.Activity, c.now))
@@ -153,7 +157,7 @@ var columnCatalog = map[columnID]column{
 		},
 	},
 	colAttached: {
-		id: colAttached, label: "", glyph: glyphAttached, width: 2, minWidth: 2,
+		id: colAttached, label: "", glyph: glyphAttached, asciiLabel: "on", width: 2, minWidth: 2,
 		render: func(c cell) string {
 			if c.session.Attached {
 				return c.styles.PeerUp.Render(glyphU(glyphAttached))
@@ -219,13 +223,23 @@ const (
 
 // headerCell renders one column's label for the header band.
 func (c column) headerCell(s Styles) string {
-	if c.glyph == 0 {
-		return s.Header.Render(c.label)
+	return s.Header.Render(c.headerText(c.glyph))
+}
+
+// headerText is the header's content for a given glyph codepoint (the
+// column's own, or the editor's armed marker): glyph and label with one
+// space between, whichever of the two exist. In ASCII mode a glyph-only
+// column shows its asciiLabel instead of nothing.
+func (c column) headerText(glyph rune) string {
+	g := ""
+	if glyph != 0 {
+		g = glyphU(glyph)
 	}
-	if c.label == "" {
-		return s.Header.Render(glyphU(c.glyph))
+	label := c.label
+	if g == "" && label == "" {
+		label = c.asciiLabel
 	}
-	return s.Header.Render(glyphU(c.glyph) + " " + c.label)
+	return joinGlyph(g, label)
 }
 
 // String makes a column read well in test failures and logs.

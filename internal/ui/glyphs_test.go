@@ -67,15 +67,20 @@ func readPackageSource(t *testing.T) map[string]string {
 }
 
 // TestASCIIGlyphs_FitTheIconSlot: a stand-in wider than iconSlotWidth would
-// push every column after it, so the table is held to two cells -- with the
-// one explicitly accepted exception.
+// push every column after it, so the table is held to two cells. Only a
+// column header may be empty (it renders as its label alone); anything
+// else empty would vanish.
 func TestASCIIGlyphs_FitTheIconSlot(t *testing.T) {
+	header := map[rune]bool{}
+	for _, c := range columnCatalog {
+		header[c.glyph] = true
+	}
 	for cp, ascii := range asciiGlyphs {
-		if w := lipgloss.Width(ascii); w > iconSlotWidth && ascii != "cal" {
+		if w := lipgloss.Width(ascii); w > iconSlotWidth {
 			t.Errorf("0x%X -> %q is %d cells; must be <= %d", cp, ascii, w, iconSlotWidth)
 		}
-		if ascii == "" {
-			t.Errorf("0x%X has an empty stand-in; use %q so it is visible", cp, asciiUnknown)
+		if ascii == "" && !header[cp] {
+			t.Errorf("0x%X has an empty stand-in and is not a column header; it would vanish", cp)
 		}
 	}
 }
@@ -93,8 +98,11 @@ func TestGlyphU_SwitchesSets(t *testing.T) {
 	}
 
 	useGlyphs(glyphsASCII)
-	if got := glyphU(glyphSession); got != ">_" {
-		t.Errorf("ascii: glyphU(session) = %q, want \">_\"", got)
+	if got := glyphU(glyphSession); got != "" {
+		t.Errorf("ascii: glyphU(session) = %q, want \"\" (a header is its label alone)", got)
+	}
+	if got := glyphU(0xE6AE); got != "nv" {
+		t.Errorf("ascii: glyphU(neovim) = %q, want the two-letter tag \"nv\"", got)
 	}
 	if got := glyphU(0x1F600); got != asciiUnknown {
 		t.Errorf("ascii: unknown codepoint = %q, want %q (visible, not blank)", got, asciiUnknown)
@@ -103,5 +111,69 @@ func TestGlyphU_SwitchesSets(t *testing.T) {
 	useGlyphs("wingdings")
 	if activeGlyphs != glyphsNerd {
 		t.Errorf("unrecognised set left activeGlyphs = %q, want nerd (safe default)", activeGlyphs)
+	}
+}
+
+// TestASCIIGlyphs_DesignRules pins the two rules the table is built on:
+// column headers have no stand-in; every app tag is two cells and unique.
+func TestASCIIGlyphs_DesignRules(t *testing.T) {
+	for _, c := range columnCatalog {
+		if c.glyph == 0 {
+			continue
+		}
+		if got, ok := asciiGlyphs[c.glyph]; !ok || got != "" {
+			t.Errorf("column %s: ASCII stand-in = %q, want none (headers read as plain labels)", c.id, got)
+		}
+	}
+	seen := map[string]rune{}
+	for cp, tag := range asciiGlyphs {
+		if tag == "" || cp == glyphNeedsYou || cp == glyphArmed {
+			continue
+		}
+		if len([]rune(tag)) != 2 {
+			t.Errorf("0x%X: tag %q is %d cells, want exactly 2 so app rows align", cp, tag, len([]rune(tag)))
+		}
+		if other, dup := seen[tag]; dup {
+			t.Errorf("tag %q is used by both 0x%X and 0x%X", tag, other, cp)
+		}
+		seen[tag] = cp
+	}
+}
+
+// TestASCIIHeaders_NoStraySpace: in ASCII mode a header cell is exactly its
+// label -- no leading space where the glyph used to be.
+func TestASCIIHeaders_NoStraySpace(t *testing.T) {
+	useGlyphs(glyphsASCII)
+	t.Cleanup(func() { useGlyphs(glyphsNerd) })
+	col := columnCatalog[colSession]
+	if got := stripLabel(col, false); got != col.label {
+		t.Errorf("stripLabel = %q, want %q", got, col.label)
+	}
+	if got := col.headerCell(testStyles()); strings.HasPrefix(got, " ") || !strings.Contains(got, col.label) {
+		t.Errorf("headerCell = %q", got)
+	}
+	if got := stripLabel(col, true); got != "* "+col.label {
+		t.Errorf("armed stripLabel = %q, want the * marker", got)
+	}
+	if got := glyphOr(glyphNote, "vol"); got != "vol" {
+		t.Errorf("glyphOr in ASCII = %q", got)
+	}
+}
+
+// TestASCIIHeaders_GlyphOnlyColumnsGetAWord: active and attached have no
+// label in Nerd mode (the glyph is the header); in ASCII they must not go
+// blank.
+func TestASCIIHeaders_GlyphOnlyColumnsGetAWord(t *testing.T) {
+	useGlyphs(glyphsASCII)
+	t.Cleanup(func() { useGlyphs(glyphsNerd) })
+	if got := stripLabel(columnCatalog[colActive], false); got != "ago" {
+		t.Errorf("active header in ASCII = %q, want \"ago\"", got)
+	}
+	if got := stripLabel(columnCatalog[colAttached], false); got != "on" {
+		t.Errorf("attached header in ASCII = %q, want \"on\"", got)
+	}
+	useGlyphs(glyphsNerd)
+	if got := stripLabel(columnCatalog[colActive], false); got != string(rune(glyphActive)) {
+		t.Errorf("active header in Nerd = %q, want the glyph alone", got)
 	}
 }

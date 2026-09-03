@@ -565,14 +565,7 @@ func stripLabel(col column, armed bool) string {
 	if armed {
 		glyph = glyphArmed
 	}
-	switch {
-	case glyph == 0:
-		return col.label
-	case col.label == "":
-		return glyphU(glyph)
-	default:
-		return glyphU(glyph) + " " + col.label
-	}
+	return col.headerText(glyph)
 }
 
 // highlightCell re-applies the selection background after the cell's own
