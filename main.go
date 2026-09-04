@@ -12,10 +12,20 @@ import (
 	"github.com/willyv3/sessui/internal/ui"
 )
 
+// version is stamped by goreleaser (-X main.version={{ .Tag }}) on a
+// release build; "dev" from a plain go build. The fleet's dotfiles apply
+// compares it to the pinned release before fetching (run_onchange_after_sessui).
+var version = "dev"
+
 func main() {
 	dump := flag.Bool("dump", false, "print rendered session rows as plain text and exit (no TUI)")
+	showVersion := flag.Bool("version", false, "print the release version and exit")
 	flag.Parse()
 
+	if *showVersion {
+		fmt.Println(version)
+		return
+	}
 	if *dump {
 		os.Exit(runDump())
 	}

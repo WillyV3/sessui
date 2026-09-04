@@ -15,7 +15,9 @@ builds:
     goos: [linux, darwin]
     goarch: [amd64, arm64]
     ldflags:
-      - -s -w
+      # main.version carries the tag (with its v) so `sessui -version` is the
+      # exact string the dotfiles pin, and a node can skip a fetch it has.
+      - -s -w -X main.version={{ .Tag }}
 
 archives:
   - formats: [tar.gz]
