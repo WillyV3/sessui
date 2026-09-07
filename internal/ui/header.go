@@ -56,34 +56,41 @@ func brandLine(s Styles, who string, total, shown int, filtering bool, width int
 	// A space either side: the rule running flush against the name reads as a
 	// collision rather than a centrepiece. Padding is part of the centred
 	// block, so the name itself stays on the midpoint.
+	// A space either side: the rule running flush against the name reads as a
+	// collision rather than a centrepiece. Padding is part of the centred
+	// block, so the name itself stays on the midpoint.
 	centre := " " + s.Name.Bold(true).Render(who) + " "
 	centreW := lipgloss.Width(who) + 2
-	left := cap + " " + brandName + " "
-	right := " " + countText(total, shown, filtering) + " " + cap
-
-	// Centre first, ends second: the identity is the thing being centred, so
-	// it keeps its position and the ends give way around it.
 	start := (width - centreW) / 2
-	leftFill := start - lipgloss.Width(left)
-	rightFill := width - start - centreW - lipgloss.Width(right)
 
-	// No room for the wordmark: drop it, keep the tally.
-	if leftFill < 1 {
-		left = cap + " "
-		leftFill = start - lipgloss.Width(left)
-	}
-	// Still no room, or none on the right: bare rule around the identity.
-	if leftFill < 1 || rightFill < 1 {
-		left, right = cap+" ", " "+cap
-		leftFill = start - lipgloss.Width(left)
-		rightFill = width - start - centreW - lipgloss.Width(right)
-	}
-	// Narrower than the identity itself: it is the only useful part left.
-	if leftFill < 0 || rightFill < 0 {
-		return s.Name.Bold(true).Render(ansi.Truncate(who, width, "…"))
+	// Shed in order of usefulness as the terminal narrows: the wordmark is
+	// decoration, the tally is information, the identity is the reason the
+	// line exists. Each rung is tried whole -- an earlier version shrank both
+	// ends at once and produced "── ──── willy@omarchy ──── ──", a rule with
+	// a hole in it where the tally had been.
+	for _, rung := range []struct{ tally, mark bool }{
+		{true, true},
+		{true, false},
+		{false, false},
+	} {
+		left, right := cap, cap
+		if rung.tally {
+			left = cap + " " + countText(total, shown, filtering) + " "
+		}
+		if rung.mark {
+			right = " " + brandName + " " + cap
+		}
+		leftFill := start - lipgloss.Width(left)
+		rightFill := width - start - centreW - lipgloss.Width(right)
+		if leftFill < 1 || rightFill < 1 {
+			continue
+		}
+		return s.Muted.Render(left+strings.Repeat(rule, leftFill)) +
+			centre +
+			s.Muted.Render(strings.Repeat(rule, rightFill)+right)
 	}
 
-	return s.Muted.Render(left+strings.Repeat(rule, leftFill)) +
-		centre +
-		s.Muted.Render(strings.Repeat(rule, rightFill)+right)
+	// Narrower than the identity plus a rule either side: the identity is the
+	// only part left worth showing.
+	return s.Name.Bold(true).Render(ansi.Truncate(who, width, "…"))
 }
