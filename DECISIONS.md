@@ -33,3 +33,21 @@ commit. Reversing one means a new entry, not an edit.
 
 - **v0.1.0 released; the fleet installs it from the release, not from a build.** goreleaser produced linux/darwin × amd64/arm64 archives + checksums; linux/amd64 verified by hash and by `sessui -version`. Delivery is a chezmoi `run_onchange` in dotfiles keyed on a pinned `sessui.version`: each reader node runs `gh release download` for its own uname on the hourly apply (repo stays private — every onboarded node has an authed gh for the private dotfiles clone), and skips when `sessui -version` already matches. omarchy (the writer) renders the script to `exit 0` and keeps building from source. Proven end to end on inspiron-omarchy: a hand-copied dev binary became the release binary, hash-identical to the archive, and a second apply changed nothing. sessui `093d123`, dotfiles `ca51a8e74` + `7bb4d81c7`.
 - **A node that cannot fetch fails its apply loudly** rather than silently keeping an old binary. That is the signal onboarding wants.
+
+## 2026-09-07
+
+- **The header widget system is removed.** `widgets.go`, `audio.go`,
+  `headerfocus.go` and their tests deleted; `header.go` is back to one function
+  that renders the tally. Willy's call -- "remove the widgets features, I think
+  its stupid" -- and the reversal is his to make: it was a lot of surface
+  (1850 lines gone, 58 added) on a tool opened to switch sessions, not to
+  monitor them, which the original count-line entry above had already said out
+  loud before the widgets were built on top of it anyway.
+
+  Reverses the 2026-09-03/04 entries on the widget contract, poll routing, the
+  `shell` escape hatch, now-playing, the PipeWire audio widget, the persistent
+  master-volume readout, and `Config.Header` omitzero. `header.widgets` in an
+  existing config is now simply ignored (unknown JSON fields are dropped), and a
+  save rewrites the file without it -- no migration needed. `^w` is unbound;
+  the attention pills went with it, chosen over keeping them.
+

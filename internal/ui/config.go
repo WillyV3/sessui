@@ -22,9 +22,6 @@ type Config struct {
 	// "ascii" for a terminal without one -- the usual state of a Mac.
 	Icons glyphSet    `json:"icons,omitempty"`
 	Theme ThemeConfig `json:"theme,omitempty"`
-	// omitzero, not omitempty: omitempty never drops a struct, so a save
-	// would write `"header": {}` for a user who never chose widgets.
-	Header HeaderConfig `json:"header,omitzero"`
 }
 
 // ThemeConfig is how the palette is chosen and, optionally, recoloured.
@@ -54,7 +51,6 @@ func (c Config) withDefaults() Config {
 	if c.Theme.Palette == "" {
 		c.Theme.Palette = paletteAuto
 	}
-	// Header.Widgets is deliberately NOT filled here: see HeaderConfig.widgets.
 	return c
 }
 

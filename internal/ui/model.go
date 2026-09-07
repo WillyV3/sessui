@@ -113,9 +113,6 @@ type Model struct {
 	// it. Both feed relayout, which is the only writer of delegate.layout.
 	columns  []columnSetting
 	showPeer bool
-	// widgets is the header's widget section, resolved from cfg.Header once
-	// at startup. Pollers among them refresh on the reload tick.
-	widgets []namedWidget
 	// marqueeFrame advances the selected row's scroll; marqueeFor is the
 	// session name it's counting for, so the frame resets to 0 (back to the
 	// row's start) the instant the selection moves -- keyed by name, not
@@ -164,45 +161,13 @@ func New() Model {
 	// A corrupt config is surfaced in the footer rather than fatal: the
 	// user still gets a working table (LoadConfig returns defaults on any
 	// failure) and can see why their layout came back as the shipped one.
-	widgets, widgetErr := resolveWidgets(cfg.Header.widgets())
-	if cfgErr == nil {
-		cfgErr = widgetErr // a bad widget entry is a config problem, surfaced the same way
-	}
-
 	m := Model{
 		list: l, spinner: sp, delegate: delegate, home: home, styles: styles,
 		huhTheme: newHuhTheme(palette), help: newHelp(palette),
-		cfg: cfg, columns: cfg.Columns, widgets: widgets, configErr: cfgErr,
+		cfg: cfg, columns: cfg.Columns, configErr: cfgErr,
 	}
 	m.relayout()
 	return m
-}
-
-// widgetState is the frame's inputs for the header widgets.
-func (m Model) widgetState() widgetState {
-	sessions := make([]session.Session, 0, len(m.list.Items()))
-	for _, item := range m.list.Items() {
-		if it, ok := item.(sessionItem); ok {
-			sessions = append(sessions, it.Session)
-		}
-	}
-	return widgetState{
-		sessions: sessions, now: time.Now(), styles: m.styles,
-		filtering: m.filtering(), shown: len(m.list.VisibleItems()), total: len(m.list.Items()),
-	}
-}
-
-// pollWidgets asks every poller for its refresh Cmd; batched onto the
-// reload tick so a widget's command runs at most once per tick, off the
-// main loop, and never from a render.
-func (m Model) pollWidgets() tea.Cmd {
-	var cmds []tea.Cmd
-	for _, w := range m.widgets {
-		if p, ok := w.widget.(poller); ok {
-			cmds = append(cmds, p.poll())
-		}
-	}
-	return tea.Batch(cmds...)
 }
 
 // usableWidth is the row width the list has to work with: the window minus
@@ -225,10 +190,7 @@ func (m *Model) relayout() {
 }
 
 func (m Model) Init() tea.Cmd {
-	// pollWidgets at open, not only on the first tick: the popup is up for a
-	// second or two at a time, so a widget that waits for the tick is blank
-	// for most of its life.
-	return tea.Batch(reloadCmd(), reloadTickCmd(), tickCmd(), marqueeTickCmd(), m.spinner.Tick, m.pollWidgets())
+	return tea.Batch(reloadCmd(), reloadTickCmd(), tickCmd(), marqueeTickCmd(), m.spinner.Tick)
 }
 
 func tickCmd() tea.Cmd {
@@ -297,11 +259,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, marqueeTickCmd()
 
 	case reloadTickMsg:
-		return m, tea.Batch(reloadCmd(), reloadTickCmd(), m.pollWidgets())
-
-	case widgetPollMsg:
-		msg.src.absorb(msg)
-		return m, nil
+		return m, tea.Batch(reloadCmd(), reloadTickCmd())
 
 	case reloadMsg:
 		if msg.err != nil {
@@ -479,12 +437,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			withTheme(m.cfg.Theme, m.cfg.Icons, func(t ThemeConfig, g glyphSet) Styles { _, s := restyle(t, g); return s })
 		return m, m.overlay.Init()
 
-	case key.Matches(msg, appKeys.Widgets):
-		if len(m.widgets) == 0 {
-			return m, nil
-		}
-		m.overlay = newHeaderFocus(m.widgets, m.help)
-		return m, m.overlay.Init()
 	}
 
 	// Type-to-filter without "/": the first printable key arms the list's own
@@ -589,11 +541,7 @@ func (m Model) View() string {
 // a tool opened to switch, not to monitor. While filtering it doubles as
 // match feedback ("3 of 13"), the one moment the number earns its place.
 func (m Model) countLine() string {
-	focus := -1
-	if hf, ok := m.overlay.(*headerFocus); ok {
-		focus = hf.index
-	}
-	return renderHeaderLine(m.widgetState(), m.usableWidth(), m.widgets, focus)
+	return renderHeaderLine(m.styles, len(m.list.Items()), len(m.list.VisibleItems()), m.filtering())
 }
 
 // filtering reports whether the user is actively filtering with text typed.

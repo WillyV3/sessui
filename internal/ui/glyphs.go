@@ -82,7 +82,6 @@ var asciiGlyphs = map[rune]string{
 	0xF0EA1: "", // machine
 
 	// markers
-	0xF0F3: "!", // needs-you pill (bell)
 	0x25C6: "*", // column editor: armed-for-move (◆)
 
 	// coding agents
@@ -140,7 +139,7 @@ var asciiGlyphs = map[rune]string{
 
 // glyphOr is glyphU with a stand-in chosen at the call site: for the few
 // places where the codepoint's table entry is an app tag but the context
-// wants a word ("vol", not "mu", for the audio widget's master readout).
+// wants a word ("vol", not "mu").
 func glyphOr(codepoint rune, ascii string) string {
 	if activeGlyphs == glyphsASCII {
 		return ascii

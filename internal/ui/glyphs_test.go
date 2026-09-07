@@ -127,7 +127,7 @@ func TestASCIIGlyphs_DesignRules(t *testing.T) {
 	}
 	seen := map[string]rune{}
 	for cp, tag := range asciiGlyphs {
-		if tag == "" || cp == glyphNeedsYou || cp == glyphArmed {
+		if tag == "" || cp == glyphArmed {
 			continue
 		}
 		if len([]rune(tag)) != 2 {
@@ -155,7 +155,7 @@ func TestASCIIHeaders_NoStraySpace(t *testing.T) {
 	if got := stripLabel(col, true); got != "* "+col.label {
 		t.Errorf("armed stripLabel = %q, want the * marker", got)
 	}
-	if got := glyphOr(glyphNote, "vol"); got != "vol" {
+	if got := glyphOr(glyphWindows, "vol"); got != "vol" {
 		t.Errorf("glyphOr in ASCII = %q", got)
 	}
 }

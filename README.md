@@ -83,7 +83,6 @@ to the defaults below and still opens.
 | `icons`         | `"nerd"` \| `"ascii"`              | `nerd`  | glyph set — `ascii` swaps every Nerd Font icon and header glyph for a plain stand-in, for a terminal without a Nerd Font (the usual Mac case) |
 | `theme.palette` | `"auto"` \| `"dark"` \| `"light"`  | `auto`  | `auto` follows the Omarchy theme when it's on the box, else the built-in dark palette; `dark`/`light` pin a complete built-in (Catppuccin Mocha / Latte) and never query Omarchy |
 | `columns`       | array of `{"id": ..., "width": ...}` | the 6 columns below | which columns show, in what order, and any width override (`width` optional) |
-| `header.widgets` | array of `{"name": ..., "args": {...}}` | `now-playing`, `attention` | the header's widget section, in order — see [Header widgets](#header-widgets--ctrlw) |
 
 ```json
 {
@@ -122,55 +121,6 @@ tmux option, the same one you can set in `tmux.conf`. It takes effect on the
 **next** `prefix + s` — the popup you're looking at can't resize itself, and
 the row says so. Columns are saved to `~/.config/sessui/config.json`.
 
-### Header widgets — `ctrl+w`
-
-The right side of the count line ("14 sessions … ") is a row of widgets. Each
-is an icon until you focus it; a focused widget expands **into the same
-line** — the header is always exactly one line, so the table underneath never
-moves. `ctrl+w` focuses the first widget, `tab` / `shift+tab` move along the
-row, `esc` returns to the list. A widget with controls of its own (a
-transport, say) takes every other key while it is focused, and the footer
-shows what they are.
-
-| widget      | collapsed                     | expanded                                      |
-|-------------|-------------------------------|-----------------------------------------------|
-| `attention` | `󰂚 2  ✉ 1` pills, nothing at zero | the names of the sessions that need you / owe mail |
-| `host`      | the short hostname            | hostname · session count                      |
-| `agents`    | `working/idle` counts, hidden with no agents | `2 working · 8 idle · 1 need you` |
-| `shell`     | `args.icon` (default `$`)     | the first line of `args.cmd`'s output          |
-| `audio`     | ` 65%` — the note and the master volume, live while anything is audible | every outgoing stream as a chip: `out 65%  Chromium 100%  cliamp muted` — `←→` pick one · `+/-` its volume · `m` mute it · `space` play/pause and `[ ]` prev/next when the picked app has a track |
-
-`audio` reads the PipeWire graph (`pw-dump`) — so it sees **all** outgoing
-audio, MPRIS or not: cliamp, a browser tab, a game — and turns each knob
-with `wpctl` by node id. The master (`out`) goes through
-`omarchy-audio-output-volume` when Omarchy is present so the desktop OSD
-fires. The track line and the transport come from Omarchy's media service
-(`omarchy-shell media`) and appear only for the app it is playing in (or
-when `out` is picked). No PipeWire (a Mac) — the widget is absent;
-`now-playing` in a config is an alias for it.
-
-`shell` is the plugin escape hatch — any command, run on the 2 s refresh
-with a 1.5 s timeout, off the UI thread. Two are fine; each keeps its own
-output:
-
-```json
-{
-  "header": {
-    "widgets": [
-      { "name": "attention" },
-      { "name": "shell", "args": { "cmd": "date +%H:%M", "icon": "" } },
-      { "name": "shell", "args": { "cmd": "cat /sys/class/power_supply/BAT0/capacity", "icon": "" } },
-      { "name": "host" }
-    ]
-  }
-}
-```
-
-An unknown widget name shows up as a `config:` error in the footer and the
-rest of the header still renders. Widgets written in Go implement `icon` and
-`expand` (`internal/ui/widgets.go`); `controllable` adds keys, `poller` adds
-a refresh.
-
 ## Keys
 
 | Key            | Action                                  |
@@ -181,7 +131,6 @@ a refresh.
 | `ctrl+r`       | rename the highlighted session          |
 | `ctrl+x`       | kill the highlighted session            |
 | `ctrl+e`       | settings: columns, popup width, theme, icons |
-| `ctrl+w`       | focus the header widgets                |
 | `esc`          | close                                   |
 
 Letters feed the filter, so there are no vim (`j`/`k`) nav keys — the arrows are

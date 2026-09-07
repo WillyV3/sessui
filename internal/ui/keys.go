@@ -19,7 +19,6 @@ type keyMap struct {
 	Rename  key.Binding
 	Kill    key.Binding
 	Columns key.Binding // opens the column editor (coledit.go)
-	Widgets key.Binding // focuses the header widgets (headerfocus.go)
 	Quit    key.Binding
 }
 
@@ -37,14 +36,13 @@ var appKeys = keyMap{
 	Rename:  key.NewBinding(key.WithKeys("ctrl+r"), key.WithHelp("^r", "rename")),
 	Kill:    key.NewBinding(key.WithKeys("ctrl+x"), key.WithHelp("^x", "kill")),
 	Columns: key.NewBinding(key.WithKeys("ctrl+e"), key.WithHelp("^e", "columns")),
-	Widgets: key.NewBinding(key.WithKeys("ctrl+w"), key.WithHelp("^w", "widgets")),
 	Quit:    key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "quit")),
 }
 
 // ShortHelp satisfies bubbles/help's help.KeyMap: the one line footerLine
 // renders when no overlay or error is showing.
 func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Move, k.Filter, k.Enter, k.Quit, k.Rename, k.Kill, k.Columns, k.Widgets}
+	return []key.Binding{k.Move, k.Filter, k.Enter, k.Quit, k.Rename, k.Kill, k.Columns}
 }
 
 // FullHelp satisfies help.KeyMap. sessui's footer is a single line -- it
