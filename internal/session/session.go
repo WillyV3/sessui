@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -24,10 +25,17 @@ type Session struct {
 	Activity time.Time
 	Attached bool
 	Windows  int
-	CWD      string
-	Apps     []string   // distinct non-shell commands, first-seen order
-	Agent    bool       // Apps includes an AI coding agent (see IsAgentApp)
-	State    AgentState // the agent's live activity; StateNone if !Agent
+	// LastAttached is when the client last switched INTO this session; the
+	// zero time if it never has been. The list is ordered by it, most recent
+	// first, so the top row is the session you were in before this one.
+	// Deliberately not Activity: a session running an agent produces output
+	// constantly, so ordering by activity would reshuffle the list under the
+	// cursor every reload.
+	LastAttached time.Time
+	CWD          string
+	Apps         []string   // distinct non-shell commands, first-seen order
+	Agent        bool       // Apps includes an AI coding agent (see IsAgentApp)
+	State        AgentState // the agent's live activity; StateNone if !Agent
 
 	// Machine is the peer's machine when this session's cwd joins to a cp3
 	// peer row with up:true; "" when the workspace is down (or unrelated to
@@ -91,7 +99,7 @@ var shellCommands = map[string]bool{
 }
 
 const (
-	sessionFormat = "#{session_name}|#{session_created}|#{session_activity}|#{session_attached}|#{session_windows}"
+	sessionFormat = "#{session_name}|#{session_created}|#{session_activity}|#{session_attached}|#{session_windows}|#{session_last_attached}"
 	// pane_active and window_active together pick out the pane an agent
 	// is actually running in, so State detection captures the right one
 	// even when a session has split panes; window_bell_flag drives Notify;
@@ -197,8 +205,19 @@ func runTmux(args ...string) (string, error) {
 	return string(out), nil
 }
 
+// currentSession is the session the popup was opened FROM, which is the one
+// session the switcher must not offer.
+//
+// It asks for #{client_session}, NOT #S. Inside a tmux popup #S resolves
+// against a target that is not the attached client, and it answers with an
+// unrelated session: measured on 2026-09-07 with sontara attached, #S returned
+// "plugin-dev" from a popup while #{client_session} returned "sontara". Using
+// #S therefore got this exactly wrong in both directions -- the session you
+// were sitting in was listed, and an innocent one was hidden. #{client_session}
+// is correct even with TMUX unset, since it resolves through the client rather
+// than the caller's environment.
 func currentSession() (string, error) {
-	out, err := runTmux("display-message", "-p", "#S")
+	out, err := runTmux("display-message", "-p", "#{client_session}")
 	if err != nil {
 		return "", err
 	}
@@ -292,22 +311,31 @@ func Build(sessOut, paneOut string, fleet peerFleet, current string) ([]Session,
 		}
 
 		sessions = append(sessions, Session{
-			Name:        m.name,
-			Created:     m.created,
-			Activity:    m.activity,
-			Attached:    m.attached,
-			Windows:     m.windows,
-			CWD:         cwd,
-			Apps:        apps[m.name],
-			Agent:       agent,
-			State:       Classify(agent, bell[m.name], ""),
-			Machine:     machine,
-			PeerName:    peerName,
-			OwedMail:    owedMail,
-			PeerSummary: peerSummary,
-			Summary:     agentSummary(titles[m.name], m.name, peerName),
+			Name:         m.name,
+			Created:      m.created,
+			Activity:     m.activity,
+			Attached:     m.attached,
+			LastAttached: m.lastAttached,
+			Windows:      m.windows,
+			CWD:          cwd,
+			Apps:         apps[m.name],
+			Agent:        agent,
+			State:        Classify(agent, bell[m.name], ""),
+			Machine:      machine,
+			PeerName:     peerName,
+			OwedMail:     owedMail,
+			PeerSummary:  peerSummary,
+			Summary:      agentSummary(titles[m.name], m.name, peerName),
 		})
 	}
+
+	// Most recently attached first, so the top row is the session you were in
+	// before this one -- the overwhelmingly common switch target. Stable, so
+	// sessions that have never been attached (zero time) keep tmux's own
+	// ordering among themselves at the bottom rather than shuffling per call.
+	sort.SliceStable(sessions, func(i, j int) bool {
+		return sessions[i].LastAttached.After(sessions[j].LastAttached)
+	})
 	return sessions, agentPane
 }
 
@@ -473,11 +501,12 @@ func hasAgentApp(apps []string) bool {
 }
 
 type sessionMeta struct {
-	name     string
-	created  time.Time
-	activity time.Time
-	attached bool
-	windows  int
+	name         string
+	created      time.Time
+	activity     time.Time
+	attached     bool
+	windows      int
+	lastAttached time.Time // zero when the session has never been attached
 }
 
 // parseSessions parses the output of:
@@ -490,7 +519,7 @@ func parseSessions(raw string) []sessionMeta {
 			continue
 		}
 		f := strings.Split(line, "|")
-		if len(f) != 5 {
+		if len(f) != 6 {
 			continue
 		}
 		created, err1 := strconv.ParseInt(f[1], 10, 64)
@@ -499,12 +528,21 @@ func parseSessions(raw string) []sessionMeta {
 		if err1 != nil || err2 != nil || err3 != nil {
 			continue
 		}
+		// last_attached is EMPTY for a session that has never been attached
+		// (`tmux new -d`), so it is parsed leniently and left as the zero
+		// time. Treating it like the other fields would drop those sessions
+		// from the list entirely -- silently, since the loop just continues.
+		var lastAttached time.Time
+		if ts, err := strconv.ParseInt(f[5], 10, 64); err == nil {
+			lastAttached = time.Unix(ts, 0)
+		}
 		metas = append(metas, sessionMeta{
-			name:     f[0],
-			created:  time.Unix(created, 0),
-			activity: time.Unix(activity, 0),
-			attached: f[3] == "1",
-			windows:  windows,
+			name:         f[0],
+			created:      time.Unix(created, 0),
+			activity:     time.Unix(activity, 0),
+			attached:     f[3] == "1",
+			windows:      windows,
+			lastAttached: lastAttached,
 		})
 	}
 	return metas

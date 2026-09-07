@@ -12,11 +12,11 @@ import (
 // `tmux list-panes -a`, and `cp3 peers` invocations, pane titles added per
 // the shapes verified live on this fleet on 2026-09-02 (real claude titles
 // carry "✳ "; shell panes just show the prompt title).
-const sampleSessOut = `Jim|1788360311|1788364693|0|1
-audio-viz|1788360310|1788360313|0|1
-doorboard|1788361652|1788364000|0|1
-sontara-sales|1788360311|1788364833|1|1
-website|1788360311|1788360313|0|2
+const sampleSessOut = `Jim|1788360311|1788364693|0|1|1788364700
+audio-viz|1788360310|1788360313|0|1|1788360400
+doorboard|1788361652|1788364000|0|1|1788364650
+sontara-sales|1788360311|1788364833|1|1|1788364900
+website|1788360311|1788360313|0|2|
 `
 
 // samplePaneOut columns: session_name|pane_current_path|pane_current_command|
@@ -60,11 +60,12 @@ func TestParseSessions(t *testing.T) {
 	}
 
 	want := sessionMeta{
-		name:     "sontara-sales",
-		created:  time.Unix(1788360311, 0),
-		activity: time.Unix(1788364833, 0),
-		attached: true,
-		windows:  1,
+		name:         "sontara-sales",
+		created:      time.Unix(1788360311, 0),
+		activity:     time.Unix(1788364833, 0),
+		attached:     true,
+		windows:      1,
+		lastAttached: time.Unix(1788364900, 0),
 	}
 	var found *sessionMeta
 	for i := range got {
@@ -81,7 +82,7 @@ func TestParseSessions(t *testing.T) {
 }
 
 func TestParseSessions_SkipsMalformedLines(t *testing.T) {
-	raw := "good|1|2|0|1\nnot-enough-fields|1|2\n\n"
+	raw := "good|1|2|0|1|3\nnot-enough-fields|1|2\n\n"
 	got := parseSessions(raw)
 	if len(got) != 1 || got[0].name != "good" {
 		t.Fatalf("got %+v, want single 'good' entry", got)
@@ -409,8 +410,8 @@ func TestBuild_SummaryEchoRejectedForOwnName(t *testing.T) {
 // up row at that cwd came first -- since the join key is cwd, not name.
 func TestBuild_PeerJoin_SharedCWD(t *testing.T) {
 	const cwd = "/home/willy/hfl-projects/astrobot"
-	sessOut := "astrobot|1788360311|1788364693|0|1\n" +
-		"astrobot-omarchy|1788360311|1788364693|0|1\n"
+	sessOut := "astrobot|1788360311|1788364693|0|1|1788364000\n" +
+		"astrobot-omarchy|1788360311|1788364693|0|1|1788364000\n"
 	paneOut := "astrobot|" + cwd + "|claude|1|1|0|%1|✳ astrobot\n" +
 		"astrobot-omarchy|" + cwd + "|claude|1|1|0|%2|✳ astrobot-omarchy\n"
 	peers := []peerRow{
@@ -463,10 +464,10 @@ func TestBuild_PeerJoin(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	sessOut := "zombie|1788360311|1788364693|0|1\n" +
-		"pending|1788360311|1788364693|0|1\n" +
-		"live|1788360311|1788364693|0|1\n" +
-		"normal|1788360311|1788364693|0|1\n"
+	sessOut := "zombie|1788360311|1788364693|0|1|1788364000\n" +
+		"pending|1788360311|1788364693|0|1|1788364000\n" +
+		"live|1788360311|1788364693|0|1|1788364000\n" +
+		"normal|1788360311|1788364693|0|1|1788364000\n"
 	paneOut := "zombie|" + zombieDir + "|bash|1|1|0|%1|willy@omarchy:~\n" +
 		"pending|" + pendingDir + "|bash|1|1|0|%2|willy@omarchy:~\n" +
 		"live|" + liveDir + "|claude|1|1|0|%3|✳ live-peer\n" +
@@ -713,7 +714,7 @@ func TestBuild_PeerJoin_CP3Unreachable(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(workspace, spawnPeerMarker), []byte("caretaker\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	sessOut := "builder-area|1788360311|1788364693|0|1\n"
+	sessOut := "builder-area|1788360311|1788364693|0|1|1788364000\n"
 	paneOut := "builder-area|" + workspace + "|bash|1|1|0|%1|willy@omarchy:~\n"
 
 	build := func(t *testing.T, fleet peerFleet) Session {
@@ -797,5 +798,52 @@ func TestParsePeersPlain_RealMacbookCapture(t *testing.T) {
 	}
 	if _, ok := byName["macbook1-home"]; !ok {
 		t.Error(`byName is missing "macbook1-home" (the row whose machine is "Mac")`)
+	}
+}
+
+// TestBuild_OrdersByLastAttached: the top row must be the session you were in
+// before this one. sampleSessOut's last_attached values are deliberately not
+// in alphabetical order, so a list that merely echoes tmux would fail this.
+func TestBuild_OrdersByLastAttached(t *testing.T) {
+	got, _ := Build(sampleSessOut, samplePaneOut, peerFleet{Rows: parsePeersPlain(samplePeerOut), Reachable: true}, "Jim")
+
+	var names []string
+	for _, s := range got {
+		names = append(names, s.Name)
+	}
+	want := []string{"sontara-sales", "doorboard", "audio-viz", "website"}
+	if len(names) != len(want) {
+		t.Fatalf("got %v, want %v", names, want)
+	}
+	for i := range want {
+		if names[i] != want[i] {
+			t.Fatalf("order = %v, want %v", names, want)
+		}
+	}
+}
+
+// TestParseSessions_NeverAttachedSurvives: tmux reports an EMPTY
+// session_last_attached for a session created with `tmux new -d` and never
+// entered. Parsing it as strictly as the other fields would drop the session
+// from the switcher entirely, and silently -- the loop just continues.
+func TestParseSessions_NeverAttachedSurvives(t *testing.T) {
+	got := parseSessions("fresh|1788360311|1788364693|0|1|\n")
+	if len(got) != 1 {
+		t.Fatalf("never-attached session was dropped: got %d, want 1", len(got))
+	}
+	if !got[0].lastAttached.IsZero() {
+		t.Errorf("lastAttached = %v, want the zero time", got[0].lastAttached)
+	}
+}
+
+// A never-attached session sorts to the bottom rather than the top: the zero
+// time is the oldest possible, which is what "you have never been here" means
+// for a most-recently-used list.
+func TestBuild_NeverAttachedSortsLast(t *testing.T) {
+	sessOut := "never|1788360311|1788364693|0|1|\n" +
+		"recent|1788360311|1788364693|0|1|1788364900\n"
+	got, _ := Build(sessOut, "", peerFleet{}, "nobody")
+	if len(got) != 2 || got[0].Name != "recent" || got[1].Name != "never" {
+		t.Fatalf("got %v, want [recent never]", got)
 	}
 }
