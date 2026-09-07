@@ -6,6 +6,7 @@ package ui
 
 import (
 	"os"
+	"os/user"
 	"slices"
 	"strings"
 	"time"
@@ -119,6 +120,30 @@ type Model struct {
 	// index, because a reload re-sorts and shifts indexes every 2s.
 	marqueeFrame int
 	marqueeFor   string
+	// who is "user@host" for the brand line, resolved once in New: neither
+	// half can change while a popup is open, and this renders every frame.
+	who string
+}
+
+// whoAmI is "user@host", degrading to whichever half is available rather than
+// rendering an empty or half-formed identity in the brand line.
+func whoAmI() string {
+	name := ""
+	if u, err := user.Current(); err == nil {
+		name = u.Username
+	}
+	host, err := os.Hostname()
+	if err != nil {
+		host = ""
+	}
+	switch {
+	case name != "" && host != "":
+		return name + "@" + host
+	case host != "":
+		return host
+	default:
+		return name
+	}
 }
 
 // New builds the initial model: reads the theme palette and the user's
@@ -164,7 +189,7 @@ func New() Model {
 	m := Model{
 		list: l, spinner: sp, delegate: delegate, home: home, styles: styles,
 		huhTheme: newHuhTheme(palette), help: newHelp(palette),
-		cfg: cfg, columns: cfg.Columns, configErr: cfgErr,
+		cfg: cfg, columns: cfg.Columns, configErr: cfgErr, who: whoAmI(),
 	}
 	m.relayout()
 	return m
@@ -326,9 +351,10 @@ func (m Model) updateOverlay(msg tea.Msg) (tea.Model, tea.Cmd) {
 // that.
 func (m Model) listSize(footerLines int) (int, int) {
 	_, v := appStyle.GetFrameSize()
-	// -2: Model always shows the count line and the column-header line above
-	// the list (see View); footerLines is the optional rename/kill/error row.
-	return m.contentWidth(), max(0, m.height-v-2-footerLines)
+	// -3: Model always shows the brand line, the count line and the
+	// column-header line above the list (see View); footerLines is the
+	// optional rename/kill/error row.
+	return m.contentWidth(), max(0, m.height-v-3-footerLines)
 }
 
 // contentWidth is the app's content width (the window minus appStyle's
@@ -529,9 +555,9 @@ func (m Model) View() string {
 	}
 
 	lm := m.list
-	lm.SetSize(m.listSize(1)) // count + header (in listSize) + 1 footer line
+	lm.SetSize(m.listSize(1)) // brand + count + header (in listSize) + 1 footer line
 
-	body := m.countLine() + "\n" + m.headerLine() + "\n" + lm.View() + "\n" + m.footerLine()
+	body := m.brandLine() + "\n" + m.countLine() + "\n" + m.headerLine() + "\n" + lm.View() + "\n" + m.footerLine()
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, appStyle.Render(body))
 }
 
@@ -540,6 +566,12 @@ func (m Model) View() string {
 // needs-you) already reads off the rows, so a stats bar here would be noise on
 // a tool opened to switch, not to monitor. While filtering it doubles as
 // match feedback ("3 of 13"), the one moment the number earns its place.
+// brandLine is the decorative rule at the very top; who is resolved once in
+// New, not per frame, because it cannot change while the popup is open.
+func (m Model) brandLine() string {
+	return brandLine(m.styles, m.who, m.usableWidth())
+}
+
 func (m Model) countLine() string {
 	return renderHeaderLine(m.styles, len(m.list.Items()), len(m.list.VisibleItems()), m.filtering())
 }

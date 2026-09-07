@@ -1,8 +1,10 @@
 package ui
 
 import (
+	"strings"
 	"testing"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -57,3 +59,46 @@ func countNewlines(s string) int {
 	}
 	return n
 }
+
+// The brand line is decoration on a tool whose scarce resource is rows, so the
+// invariant that matters is that it is always exactly one line of at most the
+// width it was given -- at any width, including absurd ones.
+func TestBrandLine_OneLineWithinWidth(t *testing.T) {
+	s := testStyles()
+	for _, w := range []int{0, 1, 5, 12, 20, 40, 80, 112, 200} {
+		got := brandLine(s, "willy@omarchy", w)
+		if countNewlines(got) != 0 {
+			t.Errorf("width %d: %d newline(s), want 0", w, countNewlines(got))
+		}
+		if n := lipgloss.Width(got); n > w {
+			t.Errorf("width %d: rendered %d cells, overflows", w, n)
+		}
+	}
+}
+
+// Narrow terminals keep the identity and drop the name: which machine you are
+// on is the useful half, the wordmark is not.
+func TestBrandLine_NarrowKeepsIdentity(t *testing.T) {
+	got := stripStyle(brandLine(testStyles(), "willy@omarchy", 24))
+	if !strings.Contains(got, "willy@omarchy") {
+		t.Errorf("narrow brand line dropped the identity: %q", got)
+	}
+	if strings.Contains(got, brandName) {
+		t.Errorf("narrow brand line kept the wordmark, no room for it: %q", got)
+	}
+}
+
+// A terminal with no Nerd Font gets the ASCII rule; box-drawing is not assumed.
+func TestBrandLine_ASCIIRule(t *testing.T) {
+	defer func(prev glyphSet) { activeGlyphs = prev }(activeGlyphs)
+	activeGlyphs = glyphsASCII
+	got := stripStyle(brandLine(testStyles(), "willy@omarchy", 80))
+	if strings.Contains(got, "─") {
+		t.Errorf("ASCII mode still used box drawing: %q", got)
+	}
+	if !strings.Contains(got, "--") {
+		t.Errorf("ASCII mode has no rule: %q", got)
+	}
+}
+
+func stripStyle(s string) string { return ansi.Strip(s) }
