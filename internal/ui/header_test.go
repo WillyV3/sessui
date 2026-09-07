@@ -8,11 +8,11 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// The header used to carry a widget section under ^w. It no longer does, so
-// what is left to test is the tally itself: the noun agrees with the count,
-// and the filter form only appears when a filter is actually narrowing.
-func TestRenderHeaderLine_Tally(t *testing.T) {
-	s := testStyles()
+func stripStyle(s string) string { return ansi.Strip(s) }
+
+func countNewlines(s string) int { return strings.Count(s, "\n") }
+
+func TestCountText(t *testing.T) {
 	for _, tc := range []struct {
 		name         string
 		total, shown int
@@ -26,47 +26,22 @@ func TestRenderHeaderLine_Tally(t *testing.T) {
 		// Filtering with everything still visible is not narrowing anything,
 		// so the "N of N" form would be noise.
 		{"filtering that excludes nothing stays plain", 7, 7, true, "7 sessions"},
-		// The filter form is only reachable while filtering; a stale shown
-		// count must not leak into the unfiltered line.
 		{"not filtering ignores shown", 7, 3, false, "7 sessions"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := ansi.Strip(renderHeaderLine(s, tc.total, tc.shown, tc.filtering)); got != tc.want {
-				t.Errorf("renderHeaderLine(%d, %d, %v) = %q, want %q", tc.total, tc.shown, tc.filtering, got, tc.want)
+			if got := countText(tc.total, tc.shown, tc.filtering); got != tc.want {
+				t.Errorf("countText(%d,%d,%v) = %q, want %q", tc.total, tc.shown, tc.filtering, got, tc.want)
 			}
 		})
 	}
 }
 
-// The header is one line and must stay one line: it sits above the table, so a
-// second line would push the list down on every render.
-func TestRenderHeaderLine_IsAlwaysOneLine(t *testing.T) {
-	s := testStyles()
-	for _, tc := range []struct{ total, shown int }{{0, 0}, {1, 1}, {999, 12}} {
-		got := renderHeaderLine(s, tc.total, tc.shown, true)
-		if n := countNewlines(got); n != 0 {
-			t.Errorf("renderHeaderLine(%d,%d) has %d newline(s), want 0: %q", tc.total, tc.shown, n, got)
-		}
-	}
-}
-
-func countNewlines(s string) int {
-	n := 0
-	for _, r := range s {
-		if r == '\n' {
-			n++
-		}
-	}
-	return n
-}
-
-// The brand line is decoration on a tool whose scarce resource is rows, so the
-// invariant that matters is that it is always exactly one line of at most the
-// width it was given -- at any width, including absurd ones.
+// The brand line sits above the table, so a second line would push the list
+// down on every render. One line of at most width cells, at any width.
 func TestBrandLine_OneLineWithinWidth(t *testing.T) {
 	s := testStyles()
 	for _, w := range []int{0, 1, 5, 12, 20, 40, 80, 112, 200} {
-		got := brandLine(s, "willy@omarchy", w)
+		got := brandLine(s, "willy@omarchy", 7, 7, false, w)
 		if countNewlines(got) != 0 {
 			t.Errorf("width %d: %d newline(s), want 0", w, countNewlines(got))
 		}
@@ -76,23 +51,63 @@ func TestBrandLine_OneLineWithinWidth(t *testing.T) {
 	}
 }
 
-// Narrow terminals keep the identity and drop the name: which machine you are
-// on is the useful half, the wordmark is not.
+// The identity is centred on the FULL width, not merely placed between the two
+// ends -- so it holds still while the tally changes width under a filter. A
+// centre that drifted as you typed would be worse than no centre.
+func TestBrandLine_IdentityStaysCentredAsTallyChanges(t *testing.T) {
+	s := testStyles()
+	const w = 112
+	// Measured in CELLS, not bytes: the rule is U+2500, three bytes each, so a
+	// byte offset from strings.Index is roughly triple the column it sits at.
+	pos := func(total, shown int, filtering bool) int {
+		line := stripStyle(brandLine(s, "willy@omarchy", total, shown, filtering, w))
+		i := strings.Index(line, "willy@omarchy")
+		if i < 0 {
+			t.Fatalf("identity absent from %q", line)
+		}
+		return lipgloss.Width(line[:i])
+	}
+	wide := pos(7, 7, false)   // "7 sessions"
+	narrow := pos(13, 3, true) // "3 of 13 sessions" -- six cells longer
+	if wide != narrow {
+		t.Errorf("identity moved when the tally grew: %d vs %d", wide, narrow)
+	}
+	// And it really is centred, not left-parked.
+	// +1 for the space that pads the centred block; the NAME sits on the
+	// midpoint, the padding straddles it.
+	mid := (w-(lipgloss.Width("willy@omarchy")+2))/2 + 1
+	if wide != mid {
+		t.Errorf("identity at %d, want centred at %d", wide, mid)
+	}
+}
+
+// Both halves of the useful content survive at the real popup width.
+func TestBrandLine_CarriesWordmarkAndTally(t *testing.T) {
+	got := stripStyle(brandLine(testStyles(), "willy@omarchy", 7, 7, false, 112))
+	for _, want := range []string{brandName, "willy@omarchy", "7 sessions"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("brand line missing %q: %q", want, got)
+		}
+	}
+}
+
+// Narrow sheds the wordmark first and the identity last: which machine you are
+// on is the useful half.
 func TestBrandLine_NarrowKeepsIdentity(t *testing.T) {
-	got := stripStyle(brandLine(testStyles(), "willy@omarchy", 24))
+	got := stripStyle(brandLine(testStyles(), "willy@omarchy", 7, 7, false, 34))
 	if !strings.Contains(got, "willy@omarchy") {
 		t.Errorf("narrow brand line dropped the identity: %q", got)
 	}
 	if strings.Contains(got, brandName) {
-		t.Errorf("narrow brand line kept the wordmark, no room for it: %q", got)
+		t.Errorf("narrow brand line kept the wordmark with no room: %q", got)
 	}
 }
 
-// A terminal with no Nerd Font gets the ASCII rule; box-drawing is not assumed.
+// A terminal with no Nerd Font gets an ASCII rule; box drawing is not assumed.
 func TestBrandLine_ASCIIRule(t *testing.T) {
 	defer func(prev glyphSet) { activeGlyphs = prev }(activeGlyphs)
 	activeGlyphs = glyphsASCII
-	got := stripStyle(brandLine(testStyles(), "willy@omarchy", 80))
+	got := stripStyle(brandLine(testStyles(), "willy@omarchy", 7, 7, false, 112))
 	if strings.Contains(got, "─") {
 		t.Errorf("ASCII mode still used box drawing: %q", got)
 	}
@@ -100,5 +115,3 @@ func TestBrandLine_ASCIIRule(t *testing.T) {
 		t.Errorf("ASCII mode has no rule: %q", got)
 	}
 }
-
-func stripStyle(s string) string { return ansi.Strip(s) }

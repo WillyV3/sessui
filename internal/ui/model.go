@@ -351,10 +351,10 @@ func (m Model) updateOverlay(msg tea.Msg) (tea.Model, tea.Cmd) {
 // that.
 func (m Model) listSize(footerLines int) (int, int) {
 	_, v := appStyle.GetFrameSize()
-	// -3: Model always shows the brand line, the count line and the
+	// -2: Model always shows the brand line (which carries the tally) and the
 	// column-header line above the list (see View); footerLines is the
 	// optional rename/kill/error row.
-	return m.contentWidth(), max(0, m.height-v-3-footerLines)
+	return m.contentWidth(), max(0, m.height-v-2-footerLines)
 }
 
 // contentWidth is the app's content width (the window minus appStyle's
@@ -555,25 +555,17 @@ func (m Model) View() string {
 	}
 
 	lm := m.list
-	lm.SetSize(m.listSize(1)) // brand + count + header (in listSize) + 1 footer line
+	lm.SetSize(m.listSize(1)) // brand + header (in listSize) + 1 footer line
 
-	body := m.brandLine() + "\n" + m.countLine() + "\n" + m.headerLine() + "\n" + lm.View() + "\n" + m.footerLine()
+	body := m.brandLine() + "\n" + m.headerLine() + "\n" + lm.View() + "\n" + m.footerLine()
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, appStyle.Render(body))
 }
 
-// countLine is the quiet session tally at the very top (list's own status bar
-// is hidden, see New). Just a count -- per-session status (working, down,
-// needs-you) already reads off the rows, so a stats bar here would be noise on
-// a tool opened to switch, not to monitor. While filtering it doubles as
-// match feedback ("3 of 13"), the one moment the number earns its place.
-// brandLine is the decorative rule at the very top; who is resolved once in
-// New, not per frame, because it cannot change while the popup is open.
+// brandLine is the single chrome row above the column headers: the wordmark,
+// who and where, and the session tally. who is resolved once in New, not per
+// frame, because it cannot change while the popup is open.
 func (m Model) brandLine() string {
-	return brandLine(m.styles, m.who, m.usableWidth())
-}
-
-func (m Model) countLine() string {
-	return renderHeaderLine(m.styles, len(m.list.Items()), len(m.list.VisibleItems()), m.filtering())
+	return brandLine(m.styles, m.who, len(m.list.Items()), len(m.list.VisibleItems()), m.filtering(), m.usableWidth())
 }
 
 // filtering reports whether the user is actively filtering with text typed.
