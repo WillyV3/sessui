@@ -77,7 +77,10 @@ func (m Model) editorPreview(styles Styles, layout tableLayout) string {
 	return strings.Join(lines, "\n")
 }
 
-var appStyle = lipgloss.NewStyle().Padding(1, 2)
+// Padding(top, right, bottom, left): no top pad, so the brand line sits on the
+// popup's first row. Horizontal stays 2 a side (delegate.go's layout assumes
+// the 4 total).
+var appStyle = lipgloss.NewStyle().Padding(0, 2, 1, 2)
 
 type Model struct {
 	list     list.Model
@@ -351,10 +354,11 @@ func (m Model) updateOverlay(msg tea.Msg) (tea.Model, tea.Cmd) {
 // that.
 func (m Model) listSize(footerLines int) (int, int) {
 	_, v := appStyle.GetFrameSize()
-	// -2: Model always shows the brand line (which carries the tally) and the
-	// column-header line above the list (see View); footerLines is the
-	// optional rename/kill/error row.
-	return m.contentWidth(), max(0, m.height-v-2-footerLines)
+	// -4: Model always shows the brand line, two blank rows separating it from
+	// the table, and the column-header line above the list (see View);
+	// footerLines is the optional rename/kill/error row. Miscounting here
+	// scrolls the list under a row that is still drawn over it.
+	return m.contentWidth(), max(0, m.height-v-4-footerLines)
 }
 
 // contentWidth is the app's content width (the window minus appStyle's
@@ -555,9 +559,9 @@ func (m Model) View() string {
 	}
 
 	lm := m.list
-	lm.SetSize(m.listSize(1)) // brand + header (in listSize) + 1 footer line
+	lm.SetSize(m.listSize(1)) // brand + 2 blanks + header (in listSize) + 1 footer line
 
-	body := m.brandLine() + "\n" + m.headerLine() + "\n" + lm.View() + "\n" + m.footerLine()
+	body := m.brandLine() + "\n\n\n" + m.headerLine() + "\n" + lm.View() + "\n" + m.footerLine()
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, appStyle.Render(body))
 }
 
