@@ -8,8 +8,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/willyv3/sessui/internal/session"
-	"github.com/willyv3/sessui/internal/ui"
+	"github.com/WillyV3/sessui/internal/session"
+	"github.com/WillyV3/sessui/internal/ui"
 )
 
 // version is stamped by goreleaser (-X main.version={{ .Tag }}) on a

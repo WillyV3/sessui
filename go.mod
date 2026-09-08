@@ -1,4 +1,4 @@
-module github.com/willyv3/sessui
+module github.com/WillyV3/sessui
 
 go 1.27.0
 

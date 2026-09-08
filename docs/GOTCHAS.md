@@ -47,7 +47,7 @@ ints, not literal runes, so they can't get mangled in transport.
 
 ### 8. cp3 peer join is `(cwd, machine)`, never name
 `ClaimWithFallback` appends `-<machine>`/`-<sess4>` on a contested name, so the
-live peer for session `sontara` can be `astrobot-omarchy`. Matching by name
+live peer for session `api-gateway` can be `deploy-bot-laptop`. Matching by name
 gives a false DOWN. Match on cwd (+ machine). See ARCHITECTURE.
 
 ### 9. A full-row background needs reset-safe re-application

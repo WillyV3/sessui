@@ -7,7 +7,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/spinner"
 
-	"github.com/willyv3/sessui/internal/session"
+	"github.com/WillyV3/sessui/internal/session"
 )
 
 // columnID names one kind of table column. It is the unit of user

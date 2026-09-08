@@ -111,7 +111,7 @@ func Classify(agent, bell bool, capture string) AgentState {
 //     these glyphs in the completed-turn summary line it leaves on screen
 //     after a turn ends ("✻ Sautéed for 16m 0s · done 12:52 PM"). Gating on
 //     "done" not appearing on that same line keeps that from reading as
-//     "still working" -- caught live on session doorboard.
+//     "still working" -- caught live on session dashboard.
 func isWorking(capture string) bool {
 	lower := strings.ToLower(capture)
 
@@ -149,7 +149,7 @@ func isWorking(capture string) bool {
 // output sitting above the real status line would otherwise win on a
 // top-down scan -- pinned by
 // TestExtractWorkingStatus_RealFleetCapture_PicksBottomLine, a real
-// capture from session sontara/pane %24 on 2026-09-02. Either return is ""
+// capture from session api-gateway/pane %24 on 2026-09-02. Either return is ""
 // when the capture doesn't match that shape at all (e.g. Working via the
 // spinner-glyph or token-counter path alone, with no verb line) -- callers
 // must tolerate empty.

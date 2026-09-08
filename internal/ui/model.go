@@ -19,7 +19,7 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/willyv3/sessui/internal/session"
+	"github.com/WillyV3/sessui/internal/session"
 )
 
 type tickMsg time.Time

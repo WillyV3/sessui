@@ -12,7 +12,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/willyv3/sessui/internal/session"
+	"github.com/WillyV3/sessui/internal/session"
 )
 
 // sessionItem adapts a session.Session to list.Item so it can live in a

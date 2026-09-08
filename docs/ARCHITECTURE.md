@@ -30,7 +30,7 @@ effort) `cp3 peers --json`, then `Build()` does the pure parse+combine (table
 `cp3 peers --json` gives `{name, up, pending, machine, cwd, summary}`. A
 session's peer is the row whose **cwd matches** and is `up`. Do **not** match by
 session name: claude-peers' `ClaimWithFallback` appends `-<machine>` when a name
-is contested (session `sontara` → peer `astrobot` / `astrobot-omarchy`), so name
+is contested (session `api-gateway` → peer `deploy-bot` / `deploy-bot-laptop`), so name
 -matching misses. Down/zombie workspace = a `.claude-peers-agent` marker present
 but no live peer (`AgentExited()`). `OwedMail` = the peer's `pending > 0`.
 

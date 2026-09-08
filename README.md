@@ -1,169 +1,111 @@
 # sessui
 
-A fast tmux session switcher — a live board of your sessions and the agents
-running in them, on a keystroke.
+A tmux session switcher that opens in a popup, shows what each session is
+actually doing, and gets out of the way.
 
-Open it (`prefix + s`), and every session is one row: the name, its app icons,
-how long since it was last active (colour-warmed by recency), its working
-directory, its bound [claude-peers] agent (● up / ○ down, ✉ when it owes a
-reply), and a **status** — the agent's own live summary (Claude Code pane title
-or a peer's `set_summary`), its cooking verb while it's generating, `needs you`
-when it rang the bell, or `idle` when it's been parked a while. Just start
-typing to filter; `enter` switches; the selected row scrolls anything too long
-to fit.
+```
+── 4 sessions ──────────────────────────── willy@omarchy ──────────────────────────── S E S S U I ──
 
-Sessions that need you sort to the top and blink; dead agent workspaces sink to
-the bottom. Above the table, a quiet count line ("14 sessions") grows a
-right-aligned attention pill for each fleet-wide signal that's actually
-pending — a bell + count for sessions that need you, an ✉ + count for peers
-owed a reply — and says nothing when neither is.
+
+    apps    session           ⧗     cwd             status
+  >       api-gateway         4s   ~/p/sessui
+           dashboard           4s   ~/p/sessui
+           docs-site           4s   ~/p/sessui
+           worker-queue        4s   ~/p/sessui
+```
+
+Sessions are ordered most-recently-used, so the one you were just in is at the
+top. Each row carries the apps running in it, how long since it was last
+active, its working directory, and — when an AI coding agent is running there —
+whether it is working, idle, or waiting on you.
 
 ## Install
 
-With [TPM](https://github.com/tmux-plugins/tpm), add to `~/.config/tmux/tmux.conf`:
+**With [TPM](https://github.com/tmux-plugins/tpm)** — add to `~/.config/tmux/tmux.conf`:
 
 ```tmux
 set -g @plugin 'WillyV3/sessui'
 ```
 
-Then `prefix + I` to fetch and build it. Two requirements, both checked at
-install and reported in the tmux status line if missing:
+Then `prefix + I`. The plugin builds the binary on first load if Go is present,
+otherwise install one of the two ways below first.
 
-- **tmux 3.7+** (`tmux -V`). Older tmux opens the popup but never redraws it
-  live — no spinners, no counters. Homebrew's tmux is current; a distro tmux
-  may not be.
-- **[Go](https://go.dev) on the PATH of the shell tmux was started from.**
-  Any Go from 1.21 up: `go build` fetches the exact toolchain the module asks
-  for on its own (Go's default `GOTOOLCHAIN=auto`). "Go is installed but
-  `prefix + I` says it isn't" is almost always a PATH set in a shell rc that
-  tmux's parent shell never sourced.
-
-The plugin compiles the binary on install and rebuilds it on `prefix + U`.
-
-Not using TPM? Clone it and build:
+**With Go:**
 
 ```sh
-git clone https://github.com/WillyV3/sessui ~/.config/tmux/plugins/sessui
-go build -C ~/.config/tmux/plugins/sessui -o sessui .
-# then in tmux.conf:  run-shell ~/.config/tmux/plugins/sessui/sessui.tmux
+go install github.com/WillyV3/sessui@latest
 ```
 
-## Configure
+**Without Go** — download a release binary from the
+[releases page](https://github.com/WillyV3/sessui/releases/latest) and put it on
+your PATH:
 
-Set these before the `run '.../tpm'` line:
+```sh
+tar -xzf sessui_linux_amd64.tar.gz -C ~/.local/bin sessui
+```
 
-| Option             | Default | Meaning                                   |
-|--------------------|---------|-------------------------------------------|
-| `@sessui-key`      | `s`     | `prefix + <key>` opens the switcher       |
-| `@sessui-width`    | `112`   | popup width (the table wants ~112 columns)|
-| `@sessui-height`   | `26`    | popup height                              |
+Archives are published for `linux_amd64`, `linux_arm64`, `darwin_amd64` and
+`darwin_arm64`.
+
+Bind it yourself if you are not using TPM:
 
 ```tmux
-set -g @sessui-key 'j'
-set -g @sessui-width '90%'
+bind-key s display-popup -E -w 112 -h 26 sessui
 ```
-
-`@sessui-width` is read at **open** time (not bind time), so a change takes
-effect on the very next `prefix + <key>` with no `tmux source`. The table's
-columns really do adapt to it — below ~112 the status column narrows first,
-floored so it never goes negative; it does not reflow to multiple lines.
-
-## Config file
-
-Separate from the tmux options above (which tmux needs before the binary
-even starts), sessui persists its own settings at
-`$XDG_CONFIG_HOME/sessui/config.json`, defaulting to
-`~/.config/sessui/config.json` — **on every OS, macOS included** (not
-`~/Library/Application Support`; chezmoi manages `~/.config` on the Mac the
-same as on Linux). No file yet, or one that fails to parse: sessui falls back
-to the defaults below and still opens.
-
-| Field           | Values                            | Default | Meaning |
-|-----------------|------------------------------------|---------|---------|
-| `icons`         | `"nerd"` \| `"ascii"`              | `nerd`  | glyph set — `ascii` swaps every Nerd Font icon and header glyph for a plain stand-in, for a terminal without a Nerd Font (the usual Mac case) |
-| `theme.palette` | `"auto"` \| `"dark"` \| `"light"`  | `auto`  | `auto` follows the Omarchy theme when it's on the box, else the built-in dark palette; `dark`/`light` pin a complete built-in (Catppuccin Mocha / Latte) and never query Omarchy |
-| `columns`       | array of `{"id": ..., "width": ...}` | the 6 columns below | which columns show, in what order, and any width override (`width` optional) |
-
-```json
-{
-  "icons": "ascii",
-  "theme": { "palette": "light" }
-}
-```
-
-The shipped table is `session`, `apps`, last-active, `cwd`, `peer`, `status` —
-`peer` disappears outright when no [claude-peers] is in use, regardless of
-configuration. Four more columns exist and can be added today by hand-editing
-`columns` (ids in `internal/ui/columns.go`): `age` (session created), `windows`
-(window count), `attached` (a client is on it right now), `machine` (the bound
-peer's machine, on its own).
-
-### Settings — `ctrl+e`
-
-The header row of the table is the editing surface; the real table redraws
-live underneath every edit — in the palette and glyph set you are choosing,
-not a mockup. Five rows, `↑↓` picks which one you're on:
-
-| row       | what it is                                  | keys                                              |
-|-----------|---------------------------------------------|---------------------------------------------------|
-| **strip** | the visible columns, exactly as laid out    | `←→` select · `enter` arm, then `←→` swaps · `space` hide · `+/-` resize |
-| **add**   | hidden columns as chips — age, windows, attached, machine | `←→` select · `space` add (it returns to the slot it left) |
-| **popup** | the tmux popup width                        | `+/-` in steps of 4                               |
-| **theme** | `auto` (follows Omarchy, else dark) · `dark` · `light` | `←→` choose — the preview redraws in it |
-| **icons** | `nerd` · `ascii` (no Nerd Font needed)      | `←→` choose — the preview redraws in it           |
-
-`esc` applies and closes — there is no confirm step, on purpose. `ctrl+z`
-abandons (closes, applies nothing; the look snaps back). `ctrl+r` resets
-everything to the shipped table, width, `auto` and `nerd`.
-
-**Where the popup width lives:** the `popup` row writes the `@sessui-width`
-tmux option, the same one you can set in `tmux.conf`. It takes effect on the
-**next** `prefix + s` — the popup you're looking at can't resize itself, and
-the row says so. Columns are saved to `~/.config/sessui/config.json`.
 
 ## Keys
 
-| Key            | Action                                  |
-|----------------|-----------------------------------------|
-| `↑` / `↓`      | move                                    |
-| type any text  | filter (no `/` needed)                  |
-| `enter`        | switch to the highlighted session, or create one named by the filter |
-| `ctrl+r`       | rename the highlighted session          |
-| `ctrl+x`       | kill the highlighted session            |
-| `ctrl+e`       | settings: columns, popup width, theme, icons |
-| `esc`          | close                                   |
+| Key           | Action |
+|---------------|--------|
+| `↑` / `↓`     | move |
+| type any text | filter — no `/` needed |
+| `enter`       | switch to the highlighted session, or create one named by the filter |
+| `ctrl+r`      | rename the highlighted session |
+| `ctrl+x`      | kill the highlighted session |
+| `ctrl+e`      | settings: columns, popup width, theme, icons |
+| `esc`         | close |
 
-Letters feed the filter, so there are no vim (`j`/`k`) nav keys — the arrows are
-the nav.
+Letters feed the filter, so there are no `j`/`k` nav keys — the arrows are the nav.
 
-Rename (`ctrl+r`) and kill (`ctrl+x`) are `huh` forms on the single footer
-line — the list stays in place above them, `esc` backs out with no side
-effect. The help line at the bottom is generated from the one keymap that
-also dispatches the keys, so it cannot drift from what the keys do.
+## Configure
+
+Popup geometry lives in tmux options, because tmux needs them before the binary
+runs:
+
+| Option           | Default | |
+|------------------|---------|--|
+| `@sessui-key`    | `s`     | `prefix + <key>` opens the switcher |
+| `@sessui-width`  | `112`   | popup width — the table wants ~112 columns |
+| `@sessui-height` | `26`    | popup height |
+
+Everything else is `~/.config/sessui/config.json`, and `ctrl+e` writes it for you:
+
+| Key             | Values | Default | |
+|-----------------|--------|---------|--|
+| `icons`         | `"nerd"` \| `"ascii"` | `nerd` | `ascii` swaps every Nerd Font glyph for a plain stand-in — use it on a terminal without a Nerd Font |
+| `theme.palette` | `"auto"` \| `"dark"` \| `"light"` | `auto` | `auto` follows the [Omarchy](https://omarchy.org) theme when present, else the built-in dark palette |
+| `columns`       | array of `{"id", "width"}` | six shipped columns | which columns show, in what order |
+
+## Pairs well with cp3
+
+If you run [claude-peers](https://github.com/WillyV3/claude-peers) (`cp3`),
+sessui joins each session to its peer by working directory and adds a `peer`
+column: whether the agent is up, what it is working on, and a `✉` when it owes
+you a reply. Nothing to configure — it reads `cp3 peers` if `cp3` is on the PATH.
+
+Without `cp3`, the peer column disappears and everything else works the same.
 
 ## Requirements
 
-- **tmux 3.7+** — the live-updating popup (spinners, scrolling, recency
-  counters) relies on the popup-redraw fix in 3.7 (issue 4920); on older tmux the popup
-  paints once and won't animate.
-- **Go 1.21+** — to build the binary (install and update only); it fetches
-  the module's own toolchain version automatically.
-- A **Nerd Font** in your terminal for the app / column icons — or pick
-  `ascii` on the **icons** row of settings (`ctrl+e`) if you don't have one
-  (the usual Mac case). ASCII mode is a design, not a fallback: column
-  headers read as plain labels, and every app is a two-letter tag — `cl`
-  claude, `nv` neovim, `gt` git, `dk` docker, `sp` spotify — unique across
-  the set so a row of apps stays aligned.
+- **tmux 3.7+** — earlier versions open the popup but will not redraw it live.
+- A **Nerd Font**, or set `"icons": "ascii"`.
+- Go 1.27+ only if you are building from source.
 
-The peer column is hidden outright when [claude-peers] is not on the
-network — not blank, absent — and everything else works the same.
+## Docs
 
-## Development
+- [Architecture](docs/ARCHITECTURE.md) — how the data and UI halves split.
+- [Gotchas](docs/GOTCHAS.md) — the things that cost real time.
 
-`CLAUDE.md` (repo root) is the agent/dev context — constraints, build/verify
-workflow, code map. `docs/ARCHITECTURE.md` explains the two layers;
-`docs/GOTCHAS.md` collects the traps (GOBIN shadow, tmux 3.7, theme colours,
-the fixed-width layout) — read it before touching layout, colour, filtering, or
-the tmux bind.
+## License
 
-[claude-peers]: https://github.com/WillyV3/claude-peers
+MIT

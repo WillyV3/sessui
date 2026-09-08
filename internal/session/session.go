@@ -210,8 +210,8 @@ func runTmux(args ...string) (string, error) {
 //
 // It asks for #{client_session}, NOT #S. Inside a tmux popup #S resolves
 // against a target that is not the attached client, and it answers with an
-// unrelated session: measured on 2026-09-07 with sontara attached, #S returned
-// "plugin-dev" from a popup while #{client_session} returned "sontara". Using
+// unrelated session: measured on 2026-09-07 with api-gateway attached, #S returned
+// "plugin-dev" from a popup while #{client_session} returned "api-gateway". Using
 // #S therefore got this exactly wrong in both directions -- the session you
 // were sitting in was listed, and an innocent one was hidden. #{client_session}
 // is correct even with TMUX unset, since it resolves through the client rather
@@ -354,7 +354,7 @@ type peerRow struct {
 
 // indexPeers builds the two lookups Build's peer join needs: cwd -> the
 // first up peer's name at that cwd (so two peers sharing a cwd, e.g. a
-// ClaimWithFallback suffix pair like astrobot/astrobot-omarchy, both
+// ClaimWithFallback suffix pair like deploy-bot/deploy-bot-laptop, both
 // resolve to one canonical peer name), and name -> the full row (first
 // name wins on a duplicate, which cp3 shouldn't produce).
 func indexPeers(peers []peerRow) (byCWD map[string]string, byName map[string]peerRow) {
