@@ -222,7 +222,10 @@ func quote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + 
 // backs out. A session that exists is recoverable; one that was never created
 // is a silent no-op.
 func NewRemote(host, name string) error {
-	remote := "tmux new-session -d -s " + quote(name)
+	// `tmux new-session` fails if the name is taken, and "it is already there"
+	// is not a reason to refuse to take the user to it -- the same reasoning
+	// that makes AttachRemote reuse an existing proxy.
+	remote := "tmux has-session -t " + quote(name) + " 2>/dev/null || tmux new-session -d -s " + quote(name)
 	if err := exec.Command("ssh", append(sshArgs(host), remote)...).Run(); err != nil {
 		return err
 	}

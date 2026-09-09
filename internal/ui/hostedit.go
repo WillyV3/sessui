@@ -25,23 +25,27 @@ import (
 	"github.com/WillyV3/sessui/internal/session"
 )
 
-// hostArrival is the bounce a chip plays the moment a machine answers: three
-// filled circles growing past the final size, then back to it. Verified present
-// in the font actually in use (MonaspiceKr Nerd Font Mono) with
-// `otfinfo -u <font> | grep -i circle` -- not guessed from a cheatsheet.
+// hostArrival is the sweep a chip plays the moment a machine answers: a circle
+// filling by eighths, one frame past full, then the ordinary dot.
 //
-//	EB8A  cod-circle_small_filled
-//	EA71  cod-circle_filled
-//	EBB4  cod-circle_large_filled   <- overshoot
-//	EA71  cod-circle_filled
-//	●     the ordinary settled mark
+// The md-circle_slice family is one set drawn at one size, so the fill moves
+// without the glyph jumping around -- an earlier version stepped between three
+// differently-sized circles and read as a stutter rather than a fill. All ten
+// codepoints verified present in the font actually in use with
+// `otfinfo -u MonaspiceKrNerdFontMono-Regular.otf | grep -i circle`.
+//
+//	F0A9E..F0AA5  md-circle_slice_1 through _8   the fill
+//	F0765         md-circle                       one frame past full
+//	●             the ordinary settled mark
 //
 // It ends on exactly the glyph the row would have shown anyway, so nothing about
 // the finished UI changes -- this is only the transition into it.
-var hostArrival = []rune{0xEB8A, 0xEA71, 0xEBB4, 0xEA71}
+var hostArrival = []rune{
+	0xF0A9E, 0xF0A9F, 0xF0AA0, 0xF0AA1,
+	0xF0AA2, 0xF0AA3, 0xF0AA4, 0xF0AA5,
+	0xF0765,
+}
 
-// hostAnimStep is one frame. Four frames is ~360ms: long enough to read as a
-// bounce, short enough that a fleet answering at once does not look like noise.
 const hostAnimStep = 90 * time.Millisecond
 
 // Host reachability marks. Plain Unicode, not Nerd Font PUA, with ASCII
