@@ -175,6 +175,13 @@ func sshArgs(alias string) []string {
 	return []string{
 		"-o", "BatchMode=yes", // never prompt; a prompt in a popup is a hang
 		"-o", "ConnectTimeout=3",
+		// Notice a machine that went away. Without these, ssh waits on a dead
+		// TCP connection forever: a laptop that sleeps or drops wifi leaves the
+		// proxy session sitting in the list with a live `ssh` process behind it,
+		// looking like a session you can still switch to. 15s x 3 gives up after
+		// ~45s, the pane closes, and tmux drops the session with its last window.
+		"-o", "ServerAliveInterval=15",
+		"-o", "ServerAliveCountMax=3",
 		"-o", "ControlMaster=auto",
 		"-o", "ControlPath=~/.ssh/sessui-%r@%h:%p",
 		"-o", "ControlPersist=60s",

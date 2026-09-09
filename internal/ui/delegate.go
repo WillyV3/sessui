@@ -246,7 +246,7 @@ func renderPeer(styles Styles, s session.Session) string {
 	}
 
 	dot := styles.PeerDown.Render("○")
-	if s.Machine != "" {
+	if s.PeerUp {
 		dot = styles.PeerUp.Render("●")
 	}
 

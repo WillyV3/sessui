@@ -42,10 +42,14 @@ type Session struct {
 	Agent        bool       // Apps includes an AI coding agent (see IsAgentApp)
 	State        AgentState // the agent's live activity; StateNone if !Agent
 
-	// Machine is the peer's machine when this session's cwd joins to a cp3
-	// peer row with up:true; "" when the workspace is down (or unrelated to
-	// any peer). See IsPeer and Build's peer join.
-	Machine string
+	// PeerUp is whether this session's cwd joins to a cp3 peer row that is up.
+	//
+	// This was a `Machine string` holding the peer's machine name, and it was
+	// only ever tested for emptiness -- a boolean wearing a string. It also had
+	// a column rendering it as though it were the session's location, which
+	// labelled a proxy for a Mac session "omarchy". As a bool it cannot be
+	// mistaken for a place again.
+	PeerUp bool
 
 	// PeerName is the workspace's peer identity: the cwd-matched up peer's
 	// name, or, when down, the name recorded in its .claude-peers-agent
@@ -80,13 +84,13 @@ type Session struct {
 }
 
 // IsPeer reports whether this session is a live (up) cp3 peer workspace.
-func (s Session) IsPeer() bool { return s.Machine != "" }
+func (s Session) IsPeer() bool { return s.PeerUp }
 
 // AgentExited reports whether this is a known peer workspace (PeerName is
 // set) whose agent isn't currently live (Machine is ""): a down spawn-peer
 // workspace -- a zombie tmux session left over after claude exited, or
 // simply a peer that hasn't been reopened yet.
-func (s Session) AgentExited() bool { return s.PeerName != "" && s.Machine == "" }
+func (s Session) AgentExited() bool { return s.PeerName != "" && !s.PeerUp }
 
 // EffectiveSummary is what the status column shows for this session's
 // current work: the peer's own authored cp3 summary when it has one (a
@@ -370,12 +374,10 @@ func Build(sessOut, paneOut string, fleet peerFleet, current string) ([]Session,
 		if peerName == "" && fleet.Reachable {
 			peerName = peerMarkerName(cwd)
 		}
-		var machine, peerSummary string
-		var owedMail bool
+		var peerSummary string
+		var peerUp, owedMail bool
 		if row, ok := peersByName[peerName]; ok && peerName != "" {
-			if row.Up {
-				machine = row.Machine
-			}
+			peerUp = row.Up
 			peerSummary = row.Summary
 			owedMail = row.Pending > 0
 		}
@@ -391,7 +393,7 @@ func Build(sessOut, paneOut string, fleet peerFleet, current string) ([]Session,
 			Apps:         apps[m.name],
 			Agent:        agent,
 			State:        Classify(agent, bell[m.name], ""),
-			Machine:      machine,
+			PeerUp:       peerUp,
 			PeerName:     peerName,
 			OwedMail:     owedMail,
 			PeerSummary:  peerSummary,
