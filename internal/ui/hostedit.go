@@ -17,6 +17,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
+
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/WillyV3/sessui/internal/session"
@@ -131,7 +133,70 @@ func (e *columnEditor) renderHostsRow(width int) string {
 	}
 
 	hint := fmt.Sprintf("%d watched", len(e.hostResult()))
-	return e.controlRow("hosts", strings.Join(chips, "   "), hint, width)
+	// controlRow spends cursorWidth + captionWidth on the left and anchors the
+	// hint right; what is left is the viewport.
+	budget := width - cursorWidth - captionWidth - lipgloss.Width(hint) - 1
+	return e.controlRow("hosts", e.windowChips(chips, budget), hint, width)
+}
+
+// chipGap separates chips. Declared once because the viewport has to measure
+// with the same value the join uses, or the window is wrong by a space a chip.
+const chipGap = "   "
+
+// windowChips scrolls the row like a table rather than letting it run off the
+// edge. A fleet is not a handful: with 16 machines the row is far wider than a
+// 112-column popup, and before this the cursor could sit on host 12 while the
+// row still showed 1-8 -- space would then toggle something invisible.
+//
+// The window only moves when the cursor would leave it, so chips stay put while
+// you arrow within view instead of re-centring on every keypress. ‹ and › mark
+// that there is more in that direction; they are inside the budget, never
+// added on top of it.
+func (e *columnEditor) windowChips(chips []string, budget int) string {
+	if len(chips) == 0 || budget <= 0 {
+		return ""
+	}
+	if e.hostCursor < e.hostScroll {
+		e.hostScroll = e.hostCursor
+	}
+
+	for {
+		start := e.hostScroll
+		end, used := start, 0
+		for end < len(chips) {
+			w := lipgloss.Width(chips[end])
+			if end > start {
+				w += len(chipGap)
+			}
+			// Reserve a cell for the marker whenever chips remain beyond here.
+			reserve := 0
+			if end < len(chips)-1 {
+				reserve = 2
+			}
+			if used+w+reserve > budget {
+				break
+			}
+			used += w
+			end++
+		}
+		if end == start { // one chip wider than the whole row: show it anyway
+			end = start + 1
+		}
+		// Cursor still off the right edge -- give up a chip on the left and
+		// measure again rather than guessing how much that frees.
+		if e.hostCursor >= end && start < len(chips)-1 {
+			e.hostScroll++
+			continue
+		}
+		out := strings.Join(chips[start:end], chipGap)
+		if start > 0 {
+			out = e.styles.Muted.Render("‹ ") + out
+		}
+		if end < len(chips) {
+			out += e.styles.Muted.Render(" ›")
+		}
+		return out
+	}
 }
 
 // syncHostState re-reads the watcher's cache. Called when a probe lands, so a

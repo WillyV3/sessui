@@ -186,6 +186,7 @@ type columnEditor struct {
 	hostWatched map[string]bool
 	hostState   map[string]session.RemoteHost
 	hostCursor  int
+	hostScroll  int // leftmost visible chip: the row is a viewport, not a line
 	hostProbed  bool
 	watcher     *session.Watcher
 
