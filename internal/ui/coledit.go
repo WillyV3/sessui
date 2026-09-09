@@ -69,7 +69,7 @@ const glyphArmed = 0x25C6 // ◆
 // user's configured ones.
 var allColumnIDs = []columnID{
 	colSession, colApps, colActive, colCWD, colPeer, colStatus,
-	colAge, colWindows, colAttached, colMachine,
+	colAge, colWindows, colAttached, colMachine, colHost,
 }
 
 // Popup width bounds and step. The floor is what the shipped six columns

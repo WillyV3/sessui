@@ -25,6 +25,10 @@ type Session struct {
 	Activity time.Time
 	Attached bool
 	Windows  int
+	// Host is the ssh alias this session lives on, empty for local. Empty
+	// rather than "local" on purpose: local is the default and unlabelled, so
+	// a local-only user never sees a column telling them where they are.
+	Host string
 	// LastAttached is when the client last switched INTO this session; the
 	// zero time if it never has been. The list is ordered by it, most recent
 	// first, so the top row is the session you were in before this one.

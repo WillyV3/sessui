@@ -5,6 +5,7 @@
 package ui
 
 import (
+	"context"
 	"os"
 	"os/user"
 	"slices"
@@ -126,6 +127,10 @@ type Model struct {
 	// who is "user@host" for the brand line, resolved once in New: neither
 	// half can change while a popup is open, and this renders every frame.
 	who string
+	// watcher caches remote hosts' sessions. A POINTER because it holds a
+	// mutex and bubbletea passes Models by value -- copying one would be a
+	// data race that go vet catches as copylocks.
+	watcher *session.Watcher
 }
 
 // whoAmI is "user@host", degrading to whichever half is available rather than
@@ -193,6 +198,7 @@ func New() Model {
 		list: l, spinner: sp, delegate: delegate, home: home, styles: styles,
 		huhTheme: newHuhTheme(palette), help: newHelp(palette),
 		cfg: cfg, columns: cfg.Columns, configErr: cfgErr, who: whoAmI(),
+		watcher: &session.Watcher{},
 	}
 	m.relayout()
 	return m
@@ -218,7 +224,8 @@ func (m *Model) relayout() {
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(reloadCmd(), reloadTickCmd(), tickCmd(), marqueeTickCmd(), m.spinner.Tick)
+	return tea.Batch(reloadCmd(m.watcher, m.cfg.Hosts), reloadTickCmd(), tickCmd(), marqueeTickCmd(), m.spinner.Tick,
+		hostTickCmd(), refreshHostsCmd(m.watcher, m.cfg.Hosts))
 }
 
 func tickCmd() tea.Cmd {
@@ -236,10 +243,38 @@ func marqueeTickCmd() tea.Cmd {
 	return tea.Tick(200*time.Millisecond, func(t time.Time) tea.Msg { return marqueeTickMsg(t) })
 }
 
-func reloadCmd() tea.Cmd {
+// reloadCmd reads local tmux and folds in whatever the watcher already has.
+// session.Merge is a cache read, so the 2s reload never waits on ssh.
+func reloadCmd(w *session.Watcher, hosts []string) tea.Cmd {
 	return func() tea.Msg {
-		sessions, err := session.List()
-		return reloadMsg{sessions: sessions, err: err}
+		local, err := session.List()
+		return reloadMsg{sessions: session.Merge(local, w, hosts), err: err}
+	}
+}
+
+// hostRefreshInterval is how often watched hosts are actually polled. Far
+// slower than the 2s local reload on purpose: each tick is one ssh round trip
+// per host, and sessions on another machine do not change fast enough to be
+// worth the traffic.
+const hostRefreshInterval = 15 * time.Second
+
+type hostTickMsg struct{}
+type hostsRefreshedMsg struct{}
+
+func hostTickCmd() tea.Cmd {
+	return tea.Tick(hostRefreshInterval, func(time.Time) tea.Msg { return hostTickMsg{} })
+}
+
+// refreshHostsCmd does the ssh fan-out off the UI thread. Returning a msg
+// rather than nothing is what makes the new data visible immediately instead
+// of on whichever 2s tick happens to follow.
+func refreshHostsCmd(w *session.Watcher, hosts []string) tea.Cmd {
+	if len(hosts) == 0 {
+		return nil
+	}
+	return func() tea.Msg {
+		w.Refresh(context.Background(), hosts)
+		return hostsRefreshedMsg{}
 	}
 }
 
@@ -287,7 +322,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, marqueeTickCmd()
 
 	case reloadTickMsg:
-		return m, tea.Batch(reloadCmd(), reloadTickCmd())
+		return m, tea.Batch(reloadCmd(m.watcher, m.cfg.Hosts), reloadTickCmd())
+
+	case hostTickMsg:
+		return m, tea.Batch(hostTickCmd(), refreshHostsCmd(m.watcher, m.cfg.Hosts))
+
+	case hostsRefreshedMsg:
+		return m, reloadCmd(m.watcher, m.cfg.Hosts)
 
 	case reloadMsg:
 		if msg.err != nil {

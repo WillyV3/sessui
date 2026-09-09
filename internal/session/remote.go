@@ -105,6 +105,9 @@ func fetchHost(ctx context.Context, alias string) RemoteHost {
 	// No peers and no current session: cp3 is a local roster, and we are not
 	// attached over there, so nothing is excluded.
 	sessions, _ := Build(sessOut, paneOut, peerFleet{}, "")
+	for i := range sessions {
+		sessions[i].Host = alias
+	}
 	return RemoteHost{Alias: alias, Sessions: sessions, Seen: time.Now()}
 }
 
@@ -124,4 +127,20 @@ func sshArgs(alias string) []string {
 		"-o", "ControlPersist=60s",
 		alias,
 	}
+}
+
+// Merge appends the watcher's cached remote sessions to a local list.
+//
+// Local first, then remote grouped by host, each already most-recently-used
+// within its group. Deliberately NOT one MRU sort across the whole list: that
+// would compare timestamps from different machines' clocks, and a few seconds
+// of skew would shuffle rows for no reason the user could see.
+//
+// Reads the cache only, so this is safe on a render path.
+func Merge(local []Session, w *Watcher, aliases []string) []Session {
+	out := local
+	for _, h := range w.Snapshot(aliases) {
+		out = append(out, h.Sessions...)
+	}
+	return out
 }

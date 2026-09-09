@@ -22,6 +22,10 @@ type Config struct {
 	// "ascii" for a terminal without one -- the usual state of a Mac.
 	Icons glyphSet    `json:"icons,omitempty"`
 	Theme ThemeConfig `json:"theme,omitempty"`
+	// Hosts are the ssh aliases whose tmux sessions are listed alongside the
+	// local ones. Empty is the shipped state: sessui polls no network until
+	// the user picks a host in the editor. Discovery offers, the user chooses.
+	Hosts []string `json:"hosts,omitempty"`
 }
 
 // ThemeConfig is how the palette is chosen and, optionally, recoloured.

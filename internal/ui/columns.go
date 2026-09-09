@@ -26,6 +26,7 @@ const (
 	colWindows  columnID = "windows"  // tmux window count
 	colAttached columnID = "attached" // a client is on it right now
 	colMachine  columnID = "machine"  // the bound peer's machine, on its own
+	colHost     columnID = "host"     // the ssh host this session lives on
 )
 
 // column is one cell of the table: what it is called, how wide it is, and
@@ -168,6 +169,13 @@ var columnCatalog = map[columnID]column{
 	colMachine: {
 		id: colMachine, label: "machine", glyph: glyphMachine, width: 12, minWidth: 4,
 		render: func(c cell) string { return c.styles.Muted.Render(c.session.Machine) },
+	},
+	colHost: {
+		id: colHost, label: "host", glyph: glyphMachine, width: 12, minWidth: 4,
+		// Blank for a local session. Local is the default and needs no label:
+		// a user with no remote hosts must never see this column assert
+		// anything about where they are.
+		render: func(c cell) string { return c.styles.Muted.Render(c.session.Host) },
 	},
 }
 
