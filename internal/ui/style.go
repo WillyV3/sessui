@@ -2,7 +2,9 @@ package ui
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -376,4 +378,27 @@ func themedListStyles(p Palette) list.Styles {
 	s.NoItems = lipgloss.NewStyle().Foreground(p.Foreground).Faint(true)
 	s.HelpStyle = lipgloss.NewStyle().Foreground(p.Foreground).Faint(true).Padding(1, 0, 0, 2)
 	return s
+}
+
+// themeStampPath is the file Omarchy writes the active theme's slug into --
+// the same one `omarchy-theme-current` reads. Thirteen bytes on this machine.
+const themeStampPath = ".local/state/omarchy/current/theme.name"
+
+// ThemeStamp identifies the active Omarchy theme, or "" when there is nothing
+// to identify.
+//
+// A file read, deliberately: no exec, no watcher, no dependency. On a machine
+// without Omarchy the path simply is not there and this returns "" forever, so
+// the caller does nothing -- the same gate omarchyThemeAvailable already uses
+// for the colour queries. Nothing about a Mac changes.
+func ThemeStamp() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	b, err := os.ReadFile(filepath.Join(home, themeStampPath))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
 }

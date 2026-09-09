@@ -24,6 +24,20 @@ import (
 )
 
 type tickMsg time.Time
+
+// themeTickMsg drives the check for an Omarchy theme switch. Its own tick
+// rather than the reload's, because the work is a 13-byte file read and does
+// not want to be coupled to how often sessions are re-listed.
+type themeTickMsg time.Time
+
+// themeInterval is how often that file is read. Fast enough that a switch feels
+// immediate, slow enough to be free.
+const themeInterval = 700 * time.Millisecond
+
+func themeTickCmd() tea.Cmd {
+	return tea.Tick(themeInterval, func(t time.Time) tea.Msg { return themeTickMsg(t) })
+}
+
 type reloadTickMsg time.Time
 type marqueeTickMsg time.Time
 
@@ -153,6 +167,10 @@ type Model struct {
 	loaded bool
 	// fullLoaded guards against a late partial replacing a complete list.
 	fullLoaded bool
+	// themeStamp is the Omarchy theme the current Styles were built from. The
+	// palette is read once at startup, so a theme switch while the popup is
+	// open used to leave it in the old colours until it was reopened.
+	themeStamp string
 }
 
 // whoAmI is "user@host", degrading to whichever half is available rather than
@@ -220,7 +238,8 @@ func New() Model {
 		list: l, spinner: sp, delegate: delegate, home: home, styles: styles,
 		huhTheme: newHuhTheme(palette), help: newHelp(palette),
 		cfg: cfg, columns: cfg.Columns, configErr: cfgErr, who: whoAmI(),
-		watcher: &session.Watcher{},
+		themeStamp: ThemeStamp(),
+		watcher:    &session.Watcher{},
 	}
 	m.relayout()
 	return m
@@ -247,7 +266,7 @@ func (m *Model) relayout() {
 
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(reloadFastCmd(m.watcher, m.cfg.Hosts), reloadCmd(m.watcher, m.cfg.Hosts),
-		reloadTickCmd(), tickCmd(), marqueeTickCmd(), m.spinner.Tick,
+		reloadTickCmd(), tickCmd(), marqueeTickCmd(), m.spinner.Tick, themeTickCmd(),
 		hostTickCmd(), refreshHostsCmd(m.watcher, m.cfg.Hosts))
 }
 
@@ -369,6 +388,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.delegate.marqueeFrame = m.marqueeFrame
 		return m, marqueeTickCmd()
+
+	case themeTickMsg:
+		// Only "auto" follows Omarchy: a pinned dark/light is a choice, and a
+		// theme switch must not override it.
+		if m.cfg.Theme.Palette == paletteAuto {
+			if now := ThemeStamp(); now != m.themeStamp {
+				m.themeStamp = now
+				palette, styles := restyle(m.cfg.Theme, m.cfg.Icons)
+				m.styles, m.delegate.styles = styles, styles
+				m.huhTheme, m.help, m.list.Styles = newHuhTheme(palette), newHelp(palette), themedListStyles(palette)
+				m.relayout()
+			}
+		}
+		return m, themeTickCmd()
 
 	case reloadTickMsg:
 		return m, tea.Batch(reloadCmd(m.watcher, m.cfg.Hosts), reloadTickCmd())
