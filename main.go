@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"runtime/debug"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -14,10 +15,29 @@ import (
 	"github.com/WillyV3/sessui/internal/ui"
 )
 
-// version is stamped by goreleaser (-X main.version={{ .Tag }}) on a
-// release build; "dev" from a plain go build. The fleet's dotfiles apply
-// compares it to the pinned release before fetching (run_onchange_after_sessui).
+// version is stamped by goreleaser (-X main.version={{ .Tag }}) on a release
+// build; "dev" from a plain go build. The fleet's dotfiles apply compares it to
+// the pinned release before fetching (run_after_sessui).
 var version = "dev"
+
+// resolvedVersion prefers the stamped tag, then whatever the module system
+// recorded. `go install <module>@latest` sets no ldflags, so a perfectly good
+// tagged install used to report "dev" -- now that the repo is public and
+// `go install` is a documented path, that is the version most users would see.
+// A local `go build` inside the repo reports what the VCS stamp says, e.g.
+// "v0.4.0+dirty" -- more honest than "dev", and distinguishable from a release
+// by the suffix. Measured, not assumed: I expected "dev" here and was wrong.
+func resolvedVersion() string {
+	if version != "dev" {
+		return version
+	}
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		if v := bi.Main.Version; v != "" && v != "(devel)" {
+			return v
+		}
+	}
+	return version
+}
 
 func main() {
 	dump := flag.Bool("dump", false, "print rendered session rows as plain text and exit (no TUI)")
@@ -26,7 +46,7 @@ func main() {
 	flag.Parse()
 
 	if *showVersion {
-		fmt.Println(version)
+		fmt.Println(resolvedVersion())
 		return
 	}
 	if *dump {
