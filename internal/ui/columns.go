@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -25,8 +26,7 @@ const (
 	colAge      columnID = "age"      // how long the session has existed
 	colWindows  columnID = "windows"  // tmux window count
 	colAttached columnID = "attached" // a client is on it right now
-	colMachine  columnID = "machine"  // the bound peer's machine, on its own
-	colHost     columnID = "host"     // the ssh host this session lives on
+	colHost     columnID = "host"     // the machine this session lives on
 )
 
 // column is one cell of the table: what it is called, how wide it is, and
@@ -166,16 +166,12 @@ var columnCatalog = map[columnID]column{
 			return ""
 		},
 	},
-	colMachine: {
-		id: colMachine, label: "machine", glyph: glyphMachine, width: 12, minWidth: 4,
-		render: func(c cell) string { return c.styles.Muted.Render(c.session.Machine) },
-	},
 	colHost: {
 		id: colHost, label: "host", glyph: glyphMachine, width: 12, minWidth: 4,
 		// Blank for a local session. Local is the default and needs no label:
 		// a user with no remote hosts must never see this column assert
 		// anything about where they are.
-		render: func(c cell) string { return c.styles.Muted.Render(c.session.Host) },
+		render: func(c cell) string { return c.styles.Muted.Render(sessionMachine(c.session)) },
 	},
 }
 
@@ -258,3 +254,29 @@ func (c column) String() string {
 // ponytail: widths are plain ints and there is exactly one flex column. A
 // weight-based distribution (two flexing columns sharing the remainder) is
 // the upgrade path if a second variable-width column ever earns its place.
+
+// sessionMachine is which computer a session is on, as a person means it.
+//
+// NOT Session.Machine, which is the bound cp3 peer's machine -- a peer
+// attribute, not a location. There used to be a "machine" column rendering that
+// field directly, and once remote sessions existed it labelled every row
+// `omarchy`, including the local proxy holding a session that lives on a Mac:
+//
+//	macbook1/cad-guy    Machine=omarchy    Host=""    PeerName=config
+//
+// The field stays -- IsPeer and AgentExited both key off it -- but no column
+// presents it as a location any more.
+//
+// A proxied remote session is a genuinely local session (that is the point), so
+// its Host is empty and the origin lives in its name. A local session literally
+// named "a/b" will therefore read as machine "a"; that is a rare mislabel
+// against the previous guaranteed-wrong one.
+func sessionMachine(s session.Session) string {
+	if s.Host != "" {
+		return s.Host
+	}
+	if host, _, ok := strings.Cut(s.Name, session.ProxySep); ok {
+		return host
+	}
+	return ""
+}
