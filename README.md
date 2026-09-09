@@ -99,7 +99,7 @@ what it's working on, `✉` when it owes you a reply. No config; it reads
 
 ## Docs
 
-[Architecture](docs/ARCHITECTURE.md) · [Gotchas](docs/GOTCHAS.md)
+[Architecture](docs/ARCHITECTURE.md) · [Security](docs/SECURITY.md) · [Gotchas](docs/GOTCHAS.md)
 
 ## License
 

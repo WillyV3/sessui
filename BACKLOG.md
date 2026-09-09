@@ -64,5 +64,13 @@ instead — the cost is that picking one implies watching it.
 halve it — but `ListFast` already paints in 5ms, so nobody is waiting on this.
 Recorded because it is real, not because it matters yet.
 
+**Connection multiplexing is enabled without asking.** `ControlMaster=auto` with
+`ControlPersist=60s` is what makes the fan-out affordable (385ms cold vs 40ms
+warm), but it leaves an authenticated socket alive for a minute. Mode 0600,
+owned by you, namespaced `sessui-`, so on a single-user machine it is the trade
+`ControlPersist` always makes. On a box where root is not you, it is a real
+widening that sessui makes on the user's behalf. Documented in SECURITY.md; a
+config key to turn it off would be better than a paragraph.
+
 **`-hosts` is undocumented.** It exists, it is how the remote half was built and
 verified, and the README does not mention it.
