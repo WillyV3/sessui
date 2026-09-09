@@ -249,3 +249,47 @@ func KillOn(host, name string) error {
 func RenameOn(host, oldName, newName string) error {
 	return runOn(host, "rename-session", "-t", oldName, newName)
 }
+
+// Forget drops one session from a host's cached list.
+//
+// Killing a remote session succeeds instantly, but the row survived until the
+// next 15s poll: Merge reads the cache, and nothing told the cache what we had
+// just done. The session was gone from the host and still on screen -- which
+// reads as the kill having failed. An action we performed ourselves is the one
+// case where the cache can be corrected without asking the network.
+func (w *Watcher) Forget(alias, name string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	h, ok := w.hosts[alias]
+	if !ok {
+		return
+	}
+	kept := h.Sessions[:0:0] // fresh backing array: Merge hands these out
+	for _, s := range h.Sessions {
+		if s.Name != name {
+			kept = append(kept, s)
+		}
+	}
+	h.Sessions = kept
+	w.hosts[alias] = h
+}
+
+// RenameCached renames a session in a host's cached list, for the same reason:
+// otherwise the row keeps its old name until the next poll.
+func (w *Watcher) RenameCached(alias, oldName, newName string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	h, ok := w.hosts[alias]
+	if !ok {
+		return
+	}
+	sessions := make([]Session, len(h.Sessions))
+	copy(sessions, h.Sessions)
+	for i := range sessions {
+		if sessions[i].Name == oldName {
+			sessions[i].Name = newName
+		}
+	}
+	h.Sessions = sessions
+	w.hosts[alias] = h
+}

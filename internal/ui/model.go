@@ -529,18 +529,36 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, appKeys.Rename):
 		if s, ok := m.selected(); ok {
 			// Bound to the row's machine: a remote row renames over there.
-			host := s.Host
+			host, w := s.Host, m.watcher
 			m.overlay = renameOverlay(m.huhTheme, m.contentWidth(), s.Name,
-				func(old, new string) error { return session.RenameOn(host, old, new) })
+				func(old, new string) error {
+					if err := session.RenameOn(host, old, new); err != nil {
+						return err
+					}
+					// Correct the cache ourselves: the reload that follows reads
+					// it, and the next poll is up to 15s away.
+					if host != "" {
+						w.RenameCached(host, old, new)
+					}
+					return nil
+				})
 			return m, m.overlay.Init()
 		}
 		return m, nil
 
 	case key.Matches(msg, appKeys.Kill):
 		if s, ok := m.selected(); ok {
-			host := s.Host
+			host, w := s.Host, m.watcher
 			m.overlay = killOverlay(m.huhTheme, m.contentWidth(), s.Name,
-				func(name string) error { return session.KillOn(host, name) })
+				func(name string) error {
+					if err := session.KillOn(host, name); err != nil {
+						return err
+					}
+					if host != "" {
+						w.Forget(host, name)
+					}
+					return nil
+				})
 			return m, m.overlay.Init()
 		}
 		return m, nil

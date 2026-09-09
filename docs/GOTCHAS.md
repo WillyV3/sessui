@@ -116,3 +116,23 @@ ahead of `m.err` and which only a later successful `SaveConfig` clears.
 Pinned by `TestConfigError_SurvivesReload`. Don't route a durable, user-
 actionable error through `m.err`; that field is for the last transient
 failure only.
+
+### A cache the UI reads must be corrected by the actions the UI takes
+
+Killing a remote session worked and the row stayed on screen for up to 15
+seconds. `Merge` renders from the `Watcher` cache, the poll is on a 15s tick,
+and nothing told the cache what we had just done -- so the session was gone
+from the host and still in the table, which reads as the kill having failed.
+
+Measured before the fix:
+
+    4s after kill    ubuntu-homelab: []    row still shows `newtest`
+    18s after kill   (past the tick)       row gone
+
+An action we performed ourselves is the one case where the cache can be
+corrected without asking the network: `Watcher.Forget` and `RenameCached` are
+called by the kill/rename closures, so the reload that immediately follows
+already reflects the change. Any future action on a remote row needs the same
+treatment -- the poll is too slow to be the only source of truth about our own
+writes.
+
