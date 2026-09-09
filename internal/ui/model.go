@@ -528,14 +528,19 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, appKeys.Rename):
 		if s, ok := m.selected(); ok {
-			m.overlay = renameOverlay(m.huhTheme, m.contentWidth(), s.Name, session.Rename)
+			// Bound to the row's machine: a remote row renames over there.
+			host := s.Host
+			m.overlay = renameOverlay(m.huhTheme, m.contentWidth(), s.Name,
+				func(old, new string) error { return session.RenameOn(host, old, new) })
 			return m, m.overlay.Init()
 		}
 		return m, nil
 
 	case key.Matches(msg, appKeys.Kill):
 		if s, ok := m.selected(); ok {
-			m.overlay = killOverlay(m.huhTheme, m.contentWidth(), s.Name, session.Kill)
+			host := s.Host
+			m.overlay = killOverlay(m.huhTheme, m.contentWidth(), s.Name,
+				func(name string) error { return session.KillOn(host, name) })
 			return m, m.overlay.Init()
 		}
 		return m, nil

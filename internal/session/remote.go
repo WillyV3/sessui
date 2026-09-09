@@ -218,3 +218,34 @@ func NewRemote(host, name string) error {
 	}
 	return AttachRemote(host, name)
 }
+
+// runOn executes a tmux command on host, or locally when host is "".
+//
+// Every action a row offers has to know which machine the row is on. Kill and
+// Rename shipped local-only while the list already showed remote sessions, so
+// killing a session that lived on another box ran `tmux kill-session` here,
+// found nothing by that name, and failed with exit status 1.
+func runOn(host string, args ...string) error {
+	if host == "" {
+		return exec.Command("tmux", args...).Run()
+	}
+	quoted := make([]string, len(args))
+	for i, a := range args {
+		quoted[i] = quote(a)
+	}
+	return exec.Command("ssh", append(sshArgs(host), "tmux "+strings.Join(quoted, " "))...).Run()
+}
+
+// KillOn kills a session on host ("" = local).
+//
+// The local proxy for a killed remote session needs no cleanup: its ssh exits
+// when the remote session goes, the pane closes, and tmux drops the session
+// with its last window.
+func KillOn(host, name string) error {
+	return runOn(host, "kill-session", "-t", name)
+}
+
+// RenameOn renames a session on host ("" = local).
+func RenameOn(host, oldName, newName string) error {
+	return runOn(host, "rename-session", "-t", oldName, newName)
+}
