@@ -35,95 +35,122 @@ func countText(total, shown int, filtering bool) string {
 	return fmt.Sprintf("%d %s", total, noun)
 }
 
-// brandLine composes the row. who is centred on the FULL width -- not merely
-// placed between the two ends -- so it stays put as the tally changes width
-// under a filter; a centre that drifted while typing would be worse than no
-// centre at all.
+// ruleRow is one chrome row: a left segment, a centred block and a right
+// segment, with rule characters filling the gaps between them.
+type ruleRow struct {
+	styles Styles
+	rule   string
+	left   string
+	right  string
+	// centre is already styled, so its display width cannot be measured from
+	// it reliably; centreWidth carries that separately.
+	centre      string
+	centreWidth int
+}
+
+// render lays the row out at width.
 //
-// Always exactly one line of at most width cells. It sheds parts rather than
-// wrapping, in this order: the wordmark, then the tally, then the rule itself.
-// A second line would push the table down on every render.
+// The centre sits on the midpoint of the FULL width, not between the two
+// segments, so it holds still as they change size -- the tally grows by six
+// cells the moment a filter narrows the list, and a centre that slid sideways
+// while typing would be worse than no centre at all.
+//
+// ok is false when the segments do not fit. That is the caller's cue to drop
+// one and ask again, rather than this guessing which to sacrifice.
+func (r ruleRow) render(width int) (string, bool) {
+	start := (width - r.centreWidth) / 2
+	leftFill := start - lipgloss.Width(r.left)
+	rightFill := width - start - r.centreWidth - lipgloss.Width(r.right)
+	if leftFill < 1 || rightFill < 1 {
+		return "", false
+	}
+	return r.styles.Muted.Render(r.left+strings.Repeat(r.rule, leftFill)) +
+		r.centre +
+		r.styles.Muted.Render(strings.Repeat(r.rule, rightFill)+r.right), true
+}
+
+// ruleChar is the fill, degrading for a terminal with no box drawing.
+func ruleChar() string {
+	if activeGlyphs == glyphsASCII {
+		return "-"
+	}
+	return "─"
+}
+
+// ruleEnd caps a rule at the edge of the row.
+func ruleEnd() string { return strings.Repeat(ruleChar(), 2) }
+
+// identity is the centred block and its display width: the name in bold with a
+// space either side, because a rule running flush against it reads as a
+// collision rather than a centrepiece. The padding is part of the centred
+// block, so the name itself still lands on the midpoint.
+func identity(s Styles, who string) (string, int) {
+	return " " + s.Name.Bold(true).Render(who) + " ", lipgloss.Width(who) + 2
+}
+
+// identityOnly is what is left when the row is narrower than the identity plus
+// a rule either side. Which machine you are on is the half worth keeping.
+func identityOnly(s Styles, who string, width int) string {
+	return s.Name.Bold(true).Render(ansi.Truncate(who, width, "…"))
+}
+
+// brandLine composes the row, shedding parts rather than wrapping: the wordmark
+// is decoration, the tally is information, the identity is why the line exists.
+//
+// Each rung is tried whole. An earlier version shrank both ends at once and
+// produced "── ──── willy@omarchy ──── ──" -- a rule with a hole in it where
+// the tally had been.
 func brandLine(s Styles, who string, total, shown int, filtering bool, width int) string {
 	if width <= 0 {
 		return ""
 	}
-	rule := "─"
-	if activeGlyphs == glyphsASCII {
-		rule = "-"
-	}
-	cap := strings.Repeat(rule, 2)
+	centre, centreWidth := identity(s, who)
+	end := ruleEnd()
 
-	// A space either side: the rule running flush against the name reads as a
-	// collision rather than a centrepiece. Padding is part of the centred
-	// block, so the name itself stays on the midpoint.
-	// A space either side: the rule running flush against the name reads as a
-	// collision rather than a centrepiece. Padding is part of the centred
-	// block, so the name itself stays on the midpoint.
-	centre := " " + s.Name.Bold(true).Render(who) + " "
-	centreW := lipgloss.Width(who) + 2
-	start := (width - centreW) / 2
-
-	// Shed in order of usefulness as the terminal narrows: the wordmark is
-	// decoration, the tally is information, the identity is the reason the
-	// line exists. Each rung is tried whole -- an earlier version shrank both
-	// ends at once and produced "── ──── willy@omarchy ──── ──", a rule with
-	// a hole in it where the tally had been.
-	for _, rung := range []struct{ tally, mark bool }{
-		{true, true},
-		{true, false},
-		{false, false},
+	for _, rung := range []struct{ tally, wordmark bool }{
+		{tally: true, wordmark: true},
+		{tally: true, wordmark: false},
+		{tally: false, wordmark: false},
 	} {
-		left, right := cap, cap
+		row := ruleRow{
+			styles: s, rule: ruleChar(),
+			left: end, right: end,
+			centre: centre, centreWidth: centreWidth,
+		}
 		if rung.tally {
-			left = cap + " " + countText(total, shown, filtering) + " "
+			row.left = end + " " + countText(total, shown, filtering) + " "
 		}
-		if rung.mark {
-			right = " " + brandName + " " + cap
+		if rung.wordmark {
+			row.right = " " + brandName + " " + end
 		}
-		leftFill := start - lipgloss.Width(left)
-		rightFill := width - start - centreW - lipgloss.Width(right)
-		if leftFill < 1 || rightFill < 1 {
-			continue
+		if out, ok := row.render(width); ok {
+			return out
 		}
-		return s.Muted.Render(left+strings.Repeat(rule, leftFill)) +
-			centre +
-			s.Muted.Render(strings.Repeat(rule, rightFill)+right)
 	}
-
-	// Narrower than the identity plus a rule either side: the identity is the
-	// only part left worth showing.
-	return s.Name.Bold(true).Render(ansi.Truncate(who, width, "…"))
+	return identityOnly(s, who, width)
 }
 
-// brandLineLoading is the same row before the first list has arrived: the
-// spinner and a word in place of the tally.
+// brandLineLoading is the same row before the first list has arrived: a spinner
+// and a word where the tally will go.
 //
 // It exists because the alternative was rendering "0 sessions" -- a claim about
 // the machine, when the truth was only that this program had not finished
-// asking. On a 17-session box that read as an empty fleet for most of half a
-// second, every single open.
+// asking. On a 17-session box that read as an empty fleet on every open.
 func brandLineLoading(s Styles, who, spinner string, width int) string {
 	if width <= 0 {
 		return ""
 	}
-	rule := "─"
-	if activeGlyphs == glyphsASCII {
-		rule = "-"
-	}
-	cap := strings.Repeat(rule, 2)
+	centre, centreWidth := identity(s, who)
+	end := ruleEnd()
 
-	centre := " " + s.Name.Bold(true).Render(who) + " "
-	centreW := lipgloss.Width(who) + 2
-	start := (width - centreW) / 2
-
-	left := cap + " " + spinner + " " + s.Muted.Render("loading") + " "
-	right := " " + brandName + " " + cap
-	leftFill := start - lipgloss.Width(left)
-	rightFill := width - start - centreW - lipgloss.Width(right)
-	if leftFill < 1 || rightFill < 1 {
-		return s.Name.Bold(true).Render(ansi.Truncate(who, width, "…"))
+	row := ruleRow{
+		styles: s, rule: ruleChar(),
+		left:   end + " " + spinner + " " + s.Muted.Render("loading") + " ",
+		right:  " " + brandName + " " + end,
+		centre: centre, centreWidth: centreWidth,
 	}
-	return s.Muted.Render(left+strings.Repeat(rule, leftFill)) +
-		centre +
-		s.Muted.Render(strings.Repeat(rule, rightFill)+right)
+	if out, ok := row.render(width); ok {
+		return out
+	}
+	return identityOnly(s, who, width)
 }
