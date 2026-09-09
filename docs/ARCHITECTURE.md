@@ -150,21 +150,107 @@ normal first run (silent, shipped defaults via `withDefaults`); a file that
 exists but won't parse returns defaults too, but its error is threaded back
 to the caller instead of swallowed. `SaveConfig` writes atomically (sibling
 temp file, then rename) and pretty-printed for hand-editing and diffs — it
-exists for the coming settings UI; nothing calls it yet, so today the file is
-hand-edited or left absent.
+is written by the `ctrl+e` editor on apply.
 
-### Header attention pills (`header.go`)
-`renderCountLine` draws the line above the column headers: the plain tally
-on the left (unchanged wording), and, flush right at the row width, a pill
-per nonzero cross-cutting signal — a needs-you count (bell, on the theme
-red) and an owed-mail count (`✉`, on the accent) — the only two facts on
-screen that are otherwise per-row and easy to miss at a glance. A pill with
-count 0 renders nothing at all: no glyph, no background, no reserved space.
-Pill `Foreground` is `Palette.Background`: whichever end of the light/dark
-scale the active theme sits at, `Background` sits at the opposite end from
-`Red`/`Accent` in both shipped palettes, so the text stays legible without a
-light/dark branch. `Model.attentionCounts` tallies over `m.list.Items()` —
-ALL sessions, not `VisibleItems()` — because a filter narrows what you're
-looking at, not what needs you; width is `m.usableWidth()`, so the pills
-stay flush right as the popup resizes. `--dump` does not render this line
-(`DumpRows` only draws rows) — verify it live.
+### The brand line (`header.go`)
+One chrome row above the column headers: the session tally on the left, `user@host`
+centred and bold, the wordmark right. It replaced a plain tally row plus a widget
+section that expanded under `^w`; the widgets were removed, and folding the tally
+into this line gave the list its row back. `who` is centred on the FULL width, not
+merely placed between the two ends, so it does not drift sideways as the tally
+changes width under a filter. The line sheds parts rather than wrapping — wordmark
+first, then the tally, identity last — because a second line would push the table
+down on every render.
+
+## Remote hosts
+
+Sessions from other machines sit in the same table as local ones. Three pieces,
+each deliberately small.
+
+### Discovery (`hosts.go`) — the library does it
+`DiscoverHosts` parses `~/.ssh/config` with `github.com/kevinburke/ssh_config`,
+the same parser `charmbracelet/wishlist` uses for this. Importing wishlist
+itself would have been the obvious move and is wrong: its `Endpoint` type lives
+beside an SSH *server*, so pulling in the parser costs **16MB and 135
+dependencies against 3MB and one** (measured). Wishlist needs a Go SSH client
+because it is a server proxying on behalf of whoever connects; sessui runs as
+the user, in their terminal, and can do better.
+
+Aliases are deduped by **resolved endpoint, not name**. A real config had
+`inspiron`, `inspiron-omarchy` and the typo `insipron` all pointing at
+`willy@100.96.252.51:22`; without this the same sessions appear three times
+under three names. `ssh -G` does the resolving (7ms, no network), so Match
+blocks and Include are understood because ssh understands them.
+
+Wildcards are dropped and **nothing is polled automatically**. Discovery
+produces the set worth *offering*; the user picks. That same config contained
+devices powered off most of the day and a typo that will never answer.
+
+### Transport (`remote.go`) — shell out to `ssh`
+`sshArgs` is the whole decision, in one function. Shelling out means
+`~/.ssh/config` governs everything — ProxyJump, certificates, agent forwarding,
+Match, Include, Tailscale names — because it *is* ssh. A Go client would
+reimplement that, partially.
+
+`ControlMaster` is what makes a fan-out affordable: **385ms cold, 36-64ms
+multiplexed** against a fleet host. Both tmux queries ride ONE round trip split
+by a marker; two calls would double the handshake for nothing.
+
+The remote command ends `exit 0`. tmux exits 1 when no server is running, so
+without it a healthy machine with no sessions open reads as UNREACHABLE —
+reachability is what ssh says about the *connection*, and an empty session list
+is allowed to be empty.
+
+### Non-blocking is the shape, not a flag
+`Watcher.Snapshot` is a map read and never touches the network, so rendering a
+frame cannot stall on a sleeping laptop. `Refresh` does the I/O and runs from a
+goroutine on its own 15s tick — far slower than the 2s local reload, because
+each tick is one ssh round trip per host. A failed poll KEEPS the previous
+sessions and records the error, so a host going quiet dims its rows instead of
+erasing them. `hostTimeout` exists because a sleeping laptop drops the SYN
+rather than refusing it.
+
+`Model.watcher` is a **pointer**: `Watcher` holds a mutex and bubbletea passes
+Models by value, so a value field is a copylocks race that `go vet` catches.
+
+### Attaching — proxy, don't mirror
+tmux cannot switch a client across machines, so "switch to a remote session" is
+really "attach over ssh". `AttachRemote` wraps that attachment in a LOCAL
+session named `host/name`, after which the row is an ordinary local session:
+every later switch is an instant `switch-client`, with no round trip and no
+special case anywhere in the UI. `Merge` drops a remote session whose proxy
+already exists locally, so attaching does not duplicate the row.
+
+The separator is `/` and **not** `:`. tmux accepts a session named
+`inspiron:oc` and then cannot target it — `:` is its session:window separator,
+so `has-session -t inspiron:oc` answers "can't find window: oc". A proxy you
+can create but never switch to is worse than none.
+
+### Actions know which machine they are on
+`runOn` is the single place that decides local-vs-remote. Kill and rename
+shipped local-only while the list already showed remote rows, so acting on a
+session that lived elsewhere ran tmux *here* and failed. Any action added to a
+row needs to go through it.
+
+An action we performed ourselves is the one case where the cache can be
+corrected without asking the network: `Forget` and `RenameCached` run in the
+kill/rename closures, so the reload that immediately follows agrees with
+reality instead of showing a ghost row until the next 15s poll.
+
+### The hosts row (`hostedit.go`)
+Same surface, same verbs as the column rows: `↑↓` row, `←→` select, `space`
+toggles. `enter` is deliberately **unbound** — it means arm-to-move on the
+strip, hosts have no order to change, and a row-specific meaning would break
+"the same verbs always mean the same thing" for one convenience the refresh
+already provides.
+
+Arriving on the row starts one fan-out across every discovered machine, not
+just watched ones, because "which of these can I add right now" is the question
+the row exists to answer. Chips resolve in place as replies land.
+
+The row is a **viewport**, not a line. With sixteen machines it is wider than a
+112-column popup, and before that the cursor could sit on host 12 while the row
+still showed 1-8 — `space` would toggle something invisible. It scrolls like a
+table: the window moves only when the cursor would leave it, and `‹` `›` are
+reserved INSIDE the width budget, never added on top of it.
+

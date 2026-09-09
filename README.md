@@ -1,140 +1,105 @@
 # sessui
 
-A tmux session switcher that opens in a popup, shows what each session is
-actually doing, and gets out of the way.
+A tmux session switcher in a popup. Shows what every session is doing — local
+and on your other machines — and gets out of the way.
 
-```
-── 4 sessions ──────────────────────────── willy@omarchy ──────────────────────────── S E S S U I ──
-
-
-    apps    session           ⧗     cwd             status
-  >       api-gateway         4s   ~/p/sessui
-           dashboard           4s   ~/p/sessui
-           docs-site           4s   ~/p/sessui
-           worker-queue        4s   ~/p/sessui
-```
-
-Sessions are ordered most-recently-used, so the one you were just in is at the
-top. Each row carries the apps running in it, how long since it was last
-active, its working directory, and — when an AI coding agent is running there —
-whether it is working, idle, or waiting on you.
+![sessui](demo.gif)
 
 ## Install
 
-**With [TPM](https://github.com/tmux-plugins/tpm)** — add to `~/.config/tmux/tmux.conf`:
+**TPM** — add to `~/.config/tmux/tmux.conf`, then `prefix + I`:
 
 ```tmux
 set -g @plugin 'WillyV3/sessui'
 ```
 
-Then `prefix + I`. The plugin builds the binary on first load if Go is present,
-otherwise install one of the two ways below first.
-
-**With Go:**
+**Go:**
 
 ```sh
 go install github.com/WillyV3/sessui@latest
 ```
 
-**Without Go** — download a release binary from the
-[releases page](https://github.com/WillyV3/sessui/releases/latest) and put it on
-your PATH:
-
-```sh
-tar -xzf sessui_linux_amd64.tar.gz -C ~/.local/bin sessui
-```
-
-Archives are published for `linux_amd64`, `linux_arm64`, `darwin_amd64` and
-`darwin_arm64`.
-
-Bind it yourself if you are not using TPM:
+**Neither** — grab a binary from
+[releases](https://github.com/WillyV3/sessui/releases/latest), put it on your
+PATH, and bind it yourself:
 
 ```tmux
 bind-key s display-popup -E -w 112 -h 26 sessui
 ```
 
+Needs **tmux 3.7+**. Earlier versions open the popup but never redraw it.
+
 ## Keys
 
-| Key           | Action |
-|---------------|--------|
-| `↑` / `↓`     | move |
-| type any text | filter — no `/` needed |
-| `enter`       | switch to the highlighted session, or create one named by the filter |
-| `ctrl+r`      | rename the highlighted session |
-| `ctrl+x`      | kill the highlighted session |
-| `ctrl+e`      | settings: columns, popup width, theme, icons |
-| `esc`         | close |
+| Key | Does |
+|-----|------|
+| `↑` `↓` | move |
+| any letter | filter — no `/` |
+| `enter` | switch, or create a session named by the filter |
+| `←` `→` | while creating: pick which machine |
+| `ctrl+r` | rename |
+| `ctrl+x` | kill |
+| `ctrl+e` | settings — columns, width, theme, icons, hosts |
+| `esc` | close |
 
-Letters feed the filter, so there are no `j`/`k` nav keys — the arrows are the nav.
+Letters filter, so there are no `j`/`k` keys. Arrows are the nav.
 
-## Configure
+## Other machines
 
-Popup geometry lives in tmux options, because tmux needs them before the binary
-runs:
-
-| Option           | Default | |
-|------------------|---------|--|
-| `@sessui-key`    | `s`     | `prefix + <key>` opens the switcher |
-| `@sessui-width`  | `112`   | popup width — the table wants ~112 columns |
-| `@sessui-height` | `26`    | popup height |
-
-Everything else is `~/.config/sessui/config.json`, and `ctrl+e` writes it for you:
-
-| Key             | Values | Default | |
-|-----------------|--------|---------|--|
-| `icons`         | `"nerd"` \| `"ascii"` | `nerd` | `ascii` swaps every Nerd Font glyph for a plain stand-in — use it on a terminal without a Nerd Font |
-| `theme.palette` | `"auto"` \| `"dark"` \| `"light"` | `auto` | `auto` follows the [Omarchy](https://omarchy.org) theme when present, else the built-in dark palette |
-| `columns`       | array of `{"id", "width"}` | six shipped columns | which columns show, in what order |
-
-## Several machines, one list
-
-`ctrl+e` has a **hosts** row listing the machines in your `~/.ssh/config`. Arrow
-across, `space` to watch one, and its tmux sessions join the list:
+`ctrl+e`, arrow down to **hosts**. Your `~/.ssh/config` is already the list —
+`space` watches one and its sessions join the table.
 
 ```
-session          host        ago   cwd
-local-work                   6s    ~/projects/api
-0                inspiron    10h   ~
-oc               inspiron    10h   ~
+hosts   ● ubuntu-homelab   ● inspiron 1   ○ macbook1   ○ raspdeck   ›
 ```
 
-Chips show reachability as answers arrive — `●` up, `○` down, `◌` still asking —
-and reachable machines float to the front. Nothing is polled until you pick a
-host, and a machine that is asleep stays listed rather than disappearing.
+`●` up · `○` down · `◌` still asking. Reachable machines sort first. Nothing is
+polled until you pick something.
 
-`enter` on a remote session attaches to it over ssh, wrapped in a local tmux
-session named `host/name`. After that it is an ordinary local session, so every
-later switch is instant and it stops appearing twice.
+`enter` on a remote session attaches over ssh inside a local session named
+`host/name`. After that it's a normal local session — instant to switch back to,
+and it stops showing twice. Kill and rename work on it too.
 
-Creating works the same way. Type a name that matches nothing and the footer
-offers the machines; `←→` picks one, `enter` creates it there and takes you to
-it. `enter` on its own still creates locally, so choosing a machine costs a
-keystroke only when you want one.
+Creating: type a name, `←→` to pick a machine, `enter`. Plain `enter` still
+creates locally.
 
-Requires only that `ssh -o BatchMode=yes <host> true` works — key auth, no
-prompt. sessui shells out to `ssh`, so `~/.ssh/config` governs everything:
-ProxyJump, certificates, agent forwarding, Tailscale names. Nothing is
-installed on the remote; it just needs tmux.
+**Needs:** `ssh -o BatchMode=yes <host> true` works (key auth, no prompt), and
+tmux on the far end. Nothing gets installed there. Since it shells out to `ssh`,
+your `~/.ssh/config` does the work — ProxyJump, certs, agent forwarding,
+Tailscale names.
 
-## Pairs well with cp3
+## Settings
 
-If you run [claude-peers](https://github.com/WillyV3/claude-peers) (`cp3`),
-sessui joins each session to its peer by working directory and adds a `peer`
-column: whether the agent is up, what it is working on, and a `✉` when it owes
-you a reply. Nothing to configure — it reads `cp3 peers` if `cp3` is on the PATH.
+`ctrl+e` edits the real table, live. `esc` applies, `ctrl+z` throws it away,
+`ctrl+r` resets.
 
-Without `cp3`, the peer column disappears and everything else works the same.
+Popup size lives in tmux, because tmux needs it before sessui starts:
 
-## Requirements
+| Option | Default | |
+|--------|---------|--|
+| `@sessui-key` | `s` | `prefix + <key>` |
+| `@sessui-width` | `112` | the table wants ~112 columns |
+| `@sessui-height` | `26` | |
 
-- **tmux 3.7+** — earlier versions open the popup but will not redraw it live.
-- A **Nerd Font**, or set `"icons": "ascii"`.
-- Go 1.27+ only if you are building from source.
+Everything else is `~/.config/sessui/config.json`, written for you by `ctrl+e`:
+
+| Key | Values | |
+|-----|--------|--|
+| `icons` | `nerd` \| `ascii` | `ascii` for terminals without a Nerd Font |
+| `theme.palette` | `auto` \| `dark` \| `light` | `auto` follows [Omarchy](https://omarchy.org) |
+| `columns` | `[{"id","width"}]` | which columns, in what order |
+| `hosts` | `["alias"]` | machines to watch |
+
+## With cp3
+
+Running [claude-peers](https://github.com/WillyV3/claude-peers)? sessui matches
+each session to its peer by directory and adds a `peer` column — up or down,
+what it's working on, `✉` when it owes you a reply. No config; it reads
+`cp3 peers` if `cp3` is there. Without it the column disappears.
 
 ## Docs
 
-- [Architecture](docs/ARCHITECTURE.md) — how the data and UI halves split.
-- [Gotchas](docs/GOTCHAS.md) — the things that cost real time.
+[Architecture](docs/ARCHITECTURE.md) · [Gotchas](docs/GOTCHAS.md)
 
 ## License
 
