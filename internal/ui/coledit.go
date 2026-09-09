@@ -49,6 +49,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
@@ -186,7 +187,8 @@ type columnEditor struct {
 	hostWatched map[string]bool
 	hostState   map[string]session.RemoteHost
 	hostCursor  int
-	hostScroll  int // leftmost visible chip: the row is a viewport, not a line
+	hostScroll  int                  // leftmost visible chip: the row is a viewport, not a line
+	hostArrived map[string]time.Time // when each machine answered, for the bounce
 	hostProbed  bool
 	watcher     *session.Watcher
 
@@ -255,6 +257,7 @@ func (e *columnEditor) withHosts(hosts, watched []string, w *session.Watcher) *c
 		}
 	}
 	e.syncHostState()
+	e.noteArrivals(true)
 	return e
 }
 
@@ -505,6 +508,17 @@ func (e *columnEditor) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// update in place while the user is still looking at them.
 	if _, ok := msg.(hostsRefreshedMsg); ok {
 		e.syncHostState()
+		if e.noteArrivals(false) {
+			return e, hostAnimCmd()
+		}
+		return e, nil
+	}
+	// The bounce drives itself: it ticks only while a chip is mid-animation and
+	// stops on its own, so an idle editor costs nothing.
+	if _, ok := msg.(hostAnimMsg); ok {
+		if e.noteArrivals(false) {
+			return e, hostAnimCmd()
+		}
 		return e, nil
 	}
 	km, ok := msg.(tea.KeyMsg)

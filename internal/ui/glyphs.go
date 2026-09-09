@@ -130,6 +130,11 @@ var asciiGlyphs = map[rune]string{
 	0xF001:  "mu", // cliamp / music
 	0xF05A9: "wi", // impala / wifi
 	0xF057E: "au", // wiremix / audio
+	// The host-arrival bounce (hostedit.go). ASCII never animates -- these are
+	// here so the codepoints have stand-ins if they are ever rendered directly.
+	0xEB8A:  "*",  // cod-circle_small_filled
+	0xEA71:  "*",  // cod-circle_filled
+	0xEBB4:  "*",  // cod-circle_large_filled
 	0xF00AF: "bl", // bluetooth
 	0xF01EE: "ml", // mail
 	0xF028C: "ch", // weechat / chat
