@@ -33,11 +33,6 @@ chip, or in the footer) turns a dead dot into a diagnosis.
 
 ## Debt taken on purpose
 
-**A host without tmux reads as "0 sessions".** The remote command ends `exit 0`
-so a host with no *server* is not called unreachable — but that also swallows
-"tmux is not installed here". Fair as a description of how many tmux sessions
-the machine has; still two different facts wearing one face.
-
 **`hostTimeout` is a hardcoded 6s.** I twice nearly changed it on a hunch and
 twice found the real cause elsewhere. A genuinely distant host has no way to ask
 for longer, and there is no evidence yet about what it should be — measure

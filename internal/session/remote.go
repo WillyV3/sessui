@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"errors"
 	"os/exec"
 	"strings"
 	"sync"
@@ -13,10 +14,35 @@ import (
 // until the kernel gives up minutes later.
 const hostTimeout = 6 * time.Second
 
+// errNoTmux is a reachable machine with no tmux, which the UI should not
+// present as an empty one.
+var errNoTmux = errors.New("tmux not found on host")
+
 // remoteMarker separates the two tmux outputs in a single ssh round trip. It
 // cannot collide with tmux output: every line on either side of it is a
 // pipe-delimited record, and this contains no pipe.
 const remoteMarker = "@@sessui@@"
+
+// noTmuxMarker is printed when the far end cannot find tmux at all, so that
+// case is reported as the error it is instead of looking like an empty server.
+const noTmuxMarker = "@@sessui-no-tmux@@"
+
+// remotePrelude puts Homebrew on PATH before running anything.
+//
+// A NON-INTERACTIVE ssh command gets a minimal PATH -- no profile is sourced --
+// and on macOS that means Homebrew is missing. Measured on a real Mac:
+//
+//	PATH=/Users/x/.cargo/bin:/usr/bin:/bin:/usr/sbin:/sbin
+//	command -v tmux  ->  not found
+//	/opt/homebrew/bin/tmux list-sessions  ->  8 sessions
+//
+// So a Mac with eight sessions open reported zero, and looked exactly like a
+// machine with nothing running. Prepending is deliberate over `bash -lc`: it
+// costs no shell startup and does not depend on how the user's profile is
+// written. Both Homebrew prefixes are covered -- /opt/homebrew on Apple
+// Silicon, /usr/local on Intel.
+const remotePrelude = `export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"; ` +
+	`command -v tmux >/dev/null 2>&1 || { echo ` + noTmuxMarker + `; exit 0; }; `
 
 // RemoteHost is one watched machine and the last thing we saw on it.
 //
@@ -112,13 +138,20 @@ func fetchHost(ctx context.Context, alias string) RemoteHost {
 	// session list is allowed to mean an empty session list. The trade: a host
 	// without tmux installed also reads as zero sessions rather than an error,
 	// which is a fair description of how many tmux sessions it has.
-	remote := "tmux list-sessions -F '" + sessionFormat + "' 2>/dev/null; " +
+	remote := remotePrelude +
+		"tmux list-sessions -F '" + sessionFormat + "' 2>/dev/null; " +
 		"echo " + remoteMarker + "; " +
 		"tmux list-panes -a -F '" + paneFormat + "' 2>/dev/null; exit 0"
 
 	out, err := exec.CommandContext(ctx, "ssh", append(sshArgs(alias), remote)...).Output()
 	if err != nil {
 		return RemoteHost{Alias: alias, Err: err}
+	}
+
+	// "tmux is not installed" is a different fact from "no sessions", and only
+	// the first is worth telling the user about.
+	if strings.Contains(string(out), noTmuxMarker) {
+		return RemoteHost{Alias: alias, Err: errNoTmux}
 	}
 
 	sessOut, paneOut, _ := strings.Cut(string(out), remoteMarker)
@@ -201,7 +234,7 @@ func ProxyName(host, name string) string { return host + ProxySep + name }
 func AttachRemote(host, name string) error {
 	proxy := ProxyName(host, name)
 	if err := exec.Command("tmux", "has-session", "-t", proxy).Run(); err != nil {
-		remote := "tmux attach -t " + quote(name)
+		remote := remotePrelude + "tmux attach -t " + quote(name)
 		cmd := "ssh " + strings.Join(sshArgs(host), " ") + " -t " + quote(remote)
 		if err := exec.Command("tmux", "new-session", "-d", "-s", proxy, cmd).Run(); err != nil {
 			return err
@@ -225,7 +258,7 @@ func NewRemote(host, name string) error {
 	// `tmux new-session` fails if the name is taken, and "it is already there"
 	// is not a reason to refuse to take the user to it -- the same reasoning
 	// that makes AttachRemote reuse an existing proxy.
-	remote := "tmux has-session -t " + quote(name) + " 2>/dev/null || tmux new-session -d -s " + quote(name)
+	remote := remotePrelude + "tmux has-session -t " + quote(name) + " 2>/dev/null || tmux new-session -d -s " + quote(name)
 	if err := exec.Command("ssh", append(sshArgs(host), remote)...).Run(); err != nil {
 		return err
 	}
@@ -246,7 +279,7 @@ func runOn(host string, args ...string) error {
 	for i, a := range args {
 		quoted[i] = quote(a)
 	}
-	return exec.Command("ssh", append(sshArgs(host), "tmux "+strings.Join(quoted, " "))...).Run()
+	return exec.Command("ssh", append(sshArgs(host), remotePrelude+"tmux "+strings.Join(quoted, " "))...).Run()
 }
 
 // KillOn kills a session on host ("" = local).
