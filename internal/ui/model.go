@@ -75,6 +75,24 @@ func restyle(t ThemeConfig, g glyphSet) (Palette, Styles) {
 	return p, newStyles(p, t.Roles)
 }
 
+// retheme realises a theme choice across every styled thing the Model owns.
+//
+// There are five and they have to move together. Two call sites need it -- the
+// editor applying a chosen theme, and the ticker noticing Omarchy changed one
+// underneath us -- and each carried its own copy of the list. Duplicated, it is
+// two chances for the next styled field to be added to one and not the other,
+// which reads as a footer still wearing the old palette after a switch.
+//
+// It deliberately does NOT relayout: the editor sets the popup width first and
+// layout depends on that, so the caller decides when the geometry has settled.
+func (m *Model) retheme(t ThemeConfig, g glyphSet) {
+	palette, styles := restyle(t, g)
+	m.styles, m.delegate.styles = styles, styles
+	m.huhTheme = newHuhTheme(palette)
+	m.help = newHelp(palette)
+	m.list.Styles = themedListStyles(palette)
+}
+
 // editorPreviewRows caps how many real session rows the column editor's live
 // preview draws -- enough to read as a table, not a full scroll of the list.
 const editorPreviewRows = 6
@@ -352,9 +370,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// the reload below is a cache read.
 		hostsChanged := !slices.Equal(m.cfg.Hosts, msg.hosts)
 		m.cfg.Hosts = msg.hosts
-		palette, styles := restyle(msg.theme, msg.icons)
-		m.styles, m.delegate.styles = styles, styles
-		m.huhTheme, m.help, m.list.Styles = newHuhTheme(palette), newHelp(palette), themedListStyles(palette)
+		m.retheme(msg.theme, msg.icons)
 		if err := SaveConfig(m.cfg); err != nil {
 			m.err = err
 		} else {
@@ -395,9 +411,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.cfg.Theme.Palette == paletteAuto {
 			if now := ThemeStamp(); now != m.themeStamp {
 				m.themeStamp = now
-				palette, styles := restyle(m.cfg.Theme, m.cfg.Icons)
-				m.styles, m.delegate.styles = styles, styles
-				m.huhTheme, m.help, m.list.Styles = newHuhTheme(palette), newHelp(palette), themedListStyles(palette)
+				m.retheme(m.cfg.Theme, m.cfg.Icons)
 				m.relayout()
 			}
 		}
