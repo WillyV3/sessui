@@ -53,13 +53,29 @@ Names come from tmux, which accepts nearly any string, so they cross a remote
 shell and are quoted with the POSIX single-quote idiom (`'` closed, escaped,
 reopened) rather than interpolated.
 
-Verified against a live host rather than argued: killing a session named
+Verified against a live host rather than argued. Killing a session named
 
 ```
 x'; touch /tmp/SESSUI_INJECTION; echo '
 ```
 
 returns "no such session" and creates no file on the far end.
+
+**The direction that matters more is inward.** A remote host chooses its own
+session names, and sessui parses them and builds a command that a LOCAL shell
+runs — `AttachRemote` nests a quoted `tmux attach -t <name>` inside a quoted
+`ssh ... -t <...>`, handed to `tmux new-session` as a shell command. A hostile
+or compromised machine you have added is therefore untrusted input arriving at
+your own shell.
+
+Tested with a session actually created on a live host, named:
+
+```
+z'$(touch /tmp/SESSUI_LOCAL_PWNED)'x
+```
+
+sessui listed it, attached to it, and nothing executed locally. The nesting is
+the fragile part; if that quoting is ever touched, re-run this.
 
 ## What it never does
 
