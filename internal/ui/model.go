@@ -573,6 +573,12 @@ func (m *Model) resetMarquee() {
 // instead of spawning a duplicate.
 func (m Model) selectOrCreate() (tea.Model, tea.Cmd) {
 	if s, ok := m.selected(); ok {
+		// A remote row cannot be switch-client'd: tmux does not cross machines.
+		// AttachRemote proxies it through a local session, after which it is an
+		// ordinary local row and this branch never runs for it again.
+		if s.Host != "" {
+			return m, doAndQuit(func() error { return session.AttachRemote(s.Host, s.Name) })
+		}
 		return m, doAndQuit(func() error { return session.Switch(s.Name) })
 	}
 	name := strings.TrimSpace(m.list.FilterInput.Value())

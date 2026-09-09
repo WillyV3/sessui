@@ -138,9 +138,58 @@ func sshArgs(alias string) []string {
 //
 // Reads the cache only, so this is safe on a render path.
 func Merge(local []Session, w *Watcher, aliases []string) []Session {
+	// A remote session already attached through a local proxy is ONE session,
+	// not two rows saying the same thing: once "oc" on inspiron is held by the
+	// local session "inspiron/oc", the remote row for it is the stale copy.
+	attached := make(map[string]bool, len(local))
+	for _, s := range local {
+		attached[s.Name] = true
+	}
 	out := local
 	for _, h := range w.Snapshot(aliases) {
-		out = append(out, h.Sessions...)
+		for _, s := range h.Sessions {
+			if attached[ProxyName(h.Alias, s.Name)] {
+				continue
+			}
+			out = append(out, s)
+		}
 	}
 	return out
 }
+
+// ProxySep joins a host and a session name into the local proxy session's name.
+//
+// NOT ":". tmux accepts a session named "inspiron:oc" and then cannot target
+// it -- ":" is its session:window separator, so `has-session -t inspiron:oc`
+// answers "can't find window: oc". A proxy you can create but never switch to
+// is worse than no proxy. "/" is unambiguous and sorts the same way.
+const ProxySep = "/"
+
+// ProxyName is the local session that holds an ssh attachment to a remote one.
+func ProxyName(host, name string) string { return host + ProxySep + name }
+
+// AttachRemote switches to a remote session by proxying it through a LOCAL one.
+//
+// tmux cannot switch a client across machines, so "switch to a remote session"
+// is really "attach over ssh". Wrapping that attachment in a local session is
+// what makes it behave like everything else afterwards: the row becomes an
+// ordinary local session, and every later switch is an instant switch-client
+// with no remote round trip and no special case anywhere in the UI.
+//
+// Idempotent -- a second enter on the same row re-uses the existing proxy
+// rather than stacking another ssh on top of it.
+func AttachRemote(host, name string) error {
+	proxy := ProxyName(host, name)
+	if err := exec.Command("tmux", "has-session", "-t", proxy).Run(); err != nil {
+		remote := "tmux attach -t " + quote(name)
+		cmd := "ssh " + strings.Join(sshArgs(host), " ") + " -t " + quote(remote)
+		if err := exec.Command("tmux", "new-session", "-d", "-s", proxy, cmd).Run(); err != nil {
+			return err
+		}
+	}
+	return Switch(proxy)
+}
+
+// quote wraps a value for the shell tmux hands the command to. Session names
+// come from tmux itself and can contain spaces.
+func quote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }

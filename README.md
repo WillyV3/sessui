@@ -86,6 +86,31 @@ Everything else is `~/.config/sessui/config.json`, and `ctrl+e` writes it for yo
 | `theme.palette` | `"auto"` \| `"dark"` \| `"light"` | `auto` | `auto` follows the [Omarchy](https://omarchy.org) theme when present, else the built-in dark palette |
 | `columns`       | array of `{"id", "width"}` | six shipped columns | which columns show, in what order |
 
+## Several machines, one list
+
+`ctrl+e` has a **hosts** row listing the machines in your `~/.ssh/config`. Arrow
+across, `space` to watch one, and its tmux sessions join the list:
+
+```
+session          host        ago   cwd
+local-work                   6s    ~/projects/api
+0                inspiron    10h   ~
+oc               inspiron    10h   ~
+```
+
+Chips show reachability as answers arrive — `●` up, `○` down, `◌` still asking —
+and reachable machines float to the front. Nothing is polled until you pick a
+host, and a machine that is asleep stays listed rather than disappearing.
+
+`enter` on a remote session attaches to it over ssh, wrapped in a local tmux
+session named `host/name`. After that it is an ordinary local session, so every
+later switch is instant and it stops appearing twice.
+
+Requires only that `ssh -o BatchMode=yes <host> true` works — key auth, no
+prompt. sessui shells out to `ssh`, so `~/.ssh/config` governs everything:
+ProxyJump, certificates, agent forwarding, Tailscale names. Nothing is
+installed on the remote; it just needs tmux.
+
 ## Pairs well with cp3
 
 If you run [claude-peers](https://github.com/WillyV3/claude-peers) (`cp3`),
