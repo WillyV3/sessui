@@ -94,3 +94,36 @@ func brandLine(s Styles, who string, total, shown int, filtering bool, width int
 	// only part left worth showing.
 	return s.Name.Bold(true).Render(ansi.Truncate(who, width, "…"))
 }
+
+// brandLineLoading is the same row before the first list has arrived: the
+// spinner and a word in place of the tally.
+//
+// It exists because the alternative was rendering "0 sessions" -- a claim about
+// the machine, when the truth was only that this program had not finished
+// asking. On a 17-session box that read as an empty fleet for most of half a
+// second, every single open.
+func brandLineLoading(s Styles, who, spinner string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	rule := "─"
+	if activeGlyphs == glyphsASCII {
+		rule = "-"
+	}
+	cap := strings.Repeat(rule, 2)
+
+	centre := " " + s.Name.Bold(true).Render(who) + " "
+	centreW := lipgloss.Width(who) + 2
+	start := (width - centreW) / 2
+
+	left := cap + " " + spinner + " " + s.Muted.Render("loading") + " "
+	right := " " + brandName + " " + cap
+	leftFill := start - lipgloss.Width(left)
+	rightFill := width - start - centreW - lipgloss.Width(right)
+	if leftFill < 1 || rightFill < 1 {
+		return s.Name.Bold(true).Render(ansi.Truncate(who, width, "…"))
+	}
+	return s.Muted.Render(left+strings.Repeat(rule, leftFill)) +
+		centre +
+		s.Muted.Render(strings.Repeat(rule, rightFill)+right)
+}

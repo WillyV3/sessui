@@ -30,6 +30,10 @@ type marqueeTickMsg time.Time
 type reloadMsg struct {
 	sessions []session.Session
 	err      error
+	// partial marks the tmux-only first pass (see session.ListFast). It paints
+	// rows in ~15ms; the full load lands behind it and replaces them. Marked so
+	// a partial that arrives LATE cannot overwrite richer data with poorer.
+	partial bool
 }
 
 // editorAppliedMsg is the column editor's apply Cmd result (see coledit.go's
@@ -143,6 +147,12 @@ type Model struct {
 	// and the choice lapses: picking a machine for "api" must not silently
 	// still apply after you backspace it away and type "notes".
 	createTargetFor string
+	// loaded is false until the first list arrives. Before that the header says
+	// so rather than rendering "0 sessions", which is a claim about the machine
+	// rather than a statement about this program's progress.
+	loaded bool
+	// fullLoaded guards against a late partial replacing a complete list.
+	fullLoaded bool
 }
 
 // whoAmI is "user@host", degrading to whichever half is available rather than
@@ -236,7 +246,8 @@ func (m *Model) relayout() {
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(reloadCmd(m.watcher, m.cfg.Hosts), reloadTickCmd(), tickCmd(), marqueeTickCmd(), m.spinner.Tick,
+	return tea.Batch(reloadFastCmd(m.watcher, m.cfg.Hosts), reloadCmd(m.watcher, m.cfg.Hosts),
+		reloadTickCmd(), tickCmd(), marqueeTickCmd(), m.spinner.Tick,
 		hostTickCmd(), refreshHostsCmd(m.watcher, m.cfg.Hosts))
 }
 
@@ -253,6 +264,16 @@ func reloadTickCmd() tea.Cmd {
 // slow enough to actually read as it moves.
 func marqueeTickCmd() tea.Cmd {
 	return tea.Tick(200*time.Millisecond, func(t time.Time) tea.Msg { return marqueeTickMsg(t) })
+}
+
+// reloadFastCmd is the first paint: tmux only, no cp3 roster and no pane
+// captures. Fired alongside reloadCmd at startup so rows appear while the slow
+// half is still running -- cp3 alone was 268ms of a 470ms load.
+func reloadFastCmd(w *session.Watcher, hosts []string) tea.Cmd {
+	return func() tea.Msg {
+		local, err := session.ListFast()
+		return reloadMsg{sessions: session.Merge(local, w, hosts), err: err, partial: true}
+	}
 }
 
 // reloadCmd reads local tmux and folds in whatever the watcher already has.
@@ -369,6 +390,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.err = msg.err
 			return m, nil
+		}
+		// A partial that lost the race to the full load is stale by definition:
+		// it knows nothing about peers or agent state, so applying it would blank
+		// columns that are already correct.
+		if msg.partial && m.fullLoaded {
+			return m, nil
+		}
+		m.loaded = true
+		if !msg.partial {
+			m.fullLoaded = true
 		}
 		m.err = nil
 		return m, m.applyReload(msg.sessions)
@@ -688,6 +719,9 @@ func (m Model) View() string {
 // who and where, and the session tally. who is resolved once in New, not per
 // frame, because it cannot change while the popup is open.
 func (m Model) brandLine() string {
+	if !m.loaded {
+		return brandLineLoading(m.styles, m.who, m.spinner.View(), m.usableWidth())
+	}
 	return brandLine(m.styles, m.who, len(m.list.Items()), len(m.list.VisibleItems()), m.filtering(), m.usableWidth())
 }
 

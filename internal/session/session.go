@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -138,10 +139,72 @@ func List() ([]Session, error) {
 	}
 
 	sessions, agentPane := Build(sessOut, paneOut, fetchPeers(), current)
+	classifyAgents(sessions, agentPane)
+	return sessions, nil
+}
 
-	// One capture-pane per agent session that hasn't already rung its bell
-	// (there are ~17 sessions here, most not agents -- cheap), to tell
-	// Working from Idle. Runs inside this tea.Cmd, never in Update.
+// ListFast is List without the two slow parts: no cp3 roster and no pane
+// captures, so it is tmux alone.
+//
+// Measured on a real 17-session server: cp3 is 268ms of a 470ms load and the
+// tmux calls are 9ms of it. Blocking the first paint on the roster meant the
+// popup showed an empty table reading "0 sessions" for most of half a second --
+// stating a falsehood while it worked. This returns rows in roughly the time
+// tmux takes, and Enrich fills in the rest underneath them.
+//
+// The peer column and agent state are simply absent until then, which is
+// honest: they are unknown, not zero.
+func ListFast() ([]Session, error) {
+	// ONE tmux invocation, not three. tmux chains commands with `;` and prints
+	// the results in order, so the current session, the session list and the
+	// pane list arrive together.
+	//
+	// This is where the remaining time actually was. Measured from a plain
+	// shell, with no Go involved at all: three separate `tmux` calls cost 10ms
+	// and the same data in one call costs 4ms. The cost is process spawning and
+	// socket round trips -- rewriting the parsing in a faster language would
+	// have moved none of it, because the parsing was never the expense.
+	//
+	// display-message -p doubles as the marker printer; tmux has no echo.
+	out, err := runTmux(
+		"display-message", "-p", "#{client_session}", ";",
+		"display-message", "-p", listMarkerSessions, ";",
+		"list-sessions", "-F", sessionFormat, ";",
+		"display-message", "-p", listMarkerPanes, ";",
+		"list-panes", "-a", "-F", paneFormat,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	current, rest, ok := strings.Cut(out, "\n"+listMarkerSessions+"\n")
+	if !ok {
+		return nil, fmt.Errorf("tmux batch: session marker missing")
+	}
+	sessOut, paneOut, ok := strings.Cut(rest, listMarkerPanes+"\n")
+	if !ok {
+		return nil, fmt.Errorf("tmux batch: pane marker missing")
+	}
+
+	sessions, _ := Build(sessOut, paneOut, peerFleet{}, strings.TrimSpace(current))
+	return sessions, nil
+}
+
+// Markers separating the three outputs of the batched call. They contain no
+// "|", so they can never be mistaken for one of the pipe-delimited records on
+// either side of them.
+const (
+	listMarkerSessions = "@@sessui-sessions@@"
+	listMarkerPanes    = "@@sessui-panes@@"
+)
+
+// classifyAgents captures each agent's pane to tell Working from Idle.
+//
+// Concurrent: one capture is 6ms and they are independent, so a box with a
+// dozen agents paid a dozen round trips in a row for no reason. Bounded by the
+// number of agent sessions, which is bounded by what a person can run.
+func classifyAgents(sessions []Session, agentPane map[string]string) {
+	var wg sync.WaitGroup
 	for i := range sessions {
 		s := &sessions[i]
 		if !s.Agent || s.State == StateNotify {
@@ -151,14 +214,17 @@ func List() ([]Session, error) {
 		if paneID == "" {
 			continue
 		}
-		capture := capturePane(paneID, capturePaneLines)
-		s.State = Classify(true, false, capture)
-		if s.State == StateWorking {
-			s.WorkingVerb, s.WorkingElapsed = extractWorkingStatus(capture)
-		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			capture := capturePane(paneID, capturePaneLines)
+			s.State = Classify(true, false, capture)
+			if s.State == StateWorking {
+				s.WorkingVerb, s.WorkingElapsed = extractWorkingStatus(capture)
+			}
+		}()
 	}
-
-	return sessions, nil
+	wg.Wait()
 }
 
 // peerFleet is what cp3 was able to tell us about the fleet.
