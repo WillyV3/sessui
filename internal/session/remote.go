@@ -56,16 +56,26 @@ func (w *Watcher) Snapshot(aliases []string) []RemoteHost {
 	return out
 }
 
-// Refresh fetches every host concurrently and updates the cache. It blocks for
-// as long as the slowest host takes (bounded by hostTimeout), so call it from a
-// goroutine -- never from a render path.
+// RefreshOne fetches a single host and updates the cache. It blocks for as long
+// as that host takes (bounded by hostTimeout), so call it from a goroutine --
+// never from a render path.
+//
+// One host at a time is the useful unit: the caller runs these concurrently and
+// can report each answer as it lands, instead of holding every result hostage to
+// the slowest machine in the fleet.
+func (w *Watcher) RefreshOne(ctx context.Context, alias string) {
+	w.store(fetchHost(ctx, alias))
+}
+
+// Refresh fetches every host concurrently and returns when all have answered.
+// Prefer RefreshOne per host where the caller can show partial results.
 func (w *Watcher) Refresh(ctx context.Context, aliases []string) {
 	var wg sync.WaitGroup
 	for _, alias := range aliases {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			w.store(fetchHost(ctx, alias))
+			w.RefreshOne(ctx, alias)
 		}()
 	}
 	wg.Wait()

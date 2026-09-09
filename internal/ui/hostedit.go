@@ -214,12 +214,16 @@ func (e *columnEditor) syncHostState() {
 	}
 }
 
-// probeOnEnter starts one fan-out the first time the cursor reaches the hosts
-// row -- across EVERY discovered machine, not just the watched ones, because
-// the question the shelf has to answer is "which of these can I add right now".
-// Once per editor: arrowing up and down the rows must not re-poll the fleet.
-func (e *columnEditor) probeOnEnter() tea.Cmd {
-	if e.row != rowHosts || e.hostProbed || e.watcher == nil || len(e.hosts) == 0 {
+// probeHosts starts one fan-out across EVERY discovered machine, not just the
+// watched ones, because "which of these can I add right now" is the question
+// the row exists to answer.
+//
+// Called from Init -- the moment the editor opens, not when the cursor reaches
+// the hosts row. Cold, a fan-out takes seconds, and the user spends the first
+// of those arrowing down five rows; starting then is free head start. Once per
+// editor: moving between rows must not re-poll the fleet.
+func (e *columnEditor) probeHosts() tea.Cmd {
+	if e.hostProbed || e.watcher == nil || len(e.hosts) == 0 {
 		return nil
 	}
 	e.hostProbed = true

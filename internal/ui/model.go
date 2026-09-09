@@ -277,17 +277,25 @@ func hostTickCmd() tea.Cmd {
 	return tea.Tick(hostRefreshInterval, func(time.Time) tea.Msg { return hostTickMsg{} })
 }
 
-// refreshHostsCmd does the ssh fan-out off the UI thread. Returning a msg
-// rather than nothing is what makes the new data visible immediately instead
-// of on whichever 2s tick happens to follow.
+// refreshHostsCmd does the ssh fan-out off the UI thread, ONE Cmd per host.
+//
+// A single Cmd that waited for all of them would report nothing until the
+// slowest machine answered -- with a sleeping laptop in the list that is the
+// full timeout, and every chip in the editor sat unresolved until then. Per
+// host, each answer lands on its own, so a reachable machine shows up in tens
+// of milliseconds while a dead one is still being waited on.
 func refreshHostsCmd(w *session.Watcher, hosts []string) tea.Cmd {
 	if len(hosts) == 0 {
 		return nil
 	}
-	return func() tea.Msg {
-		w.Refresh(context.Background(), hosts)
-		return hostsRefreshedMsg{}
+	cmds := make([]tea.Cmd, 0, len(hosts))
+	for _, h := range hosts {
+		cmds = append(cmds, func() tea.Msg {
+			w.RefreshOne(context.Background(), h)
+			return hostsRefreshedMsg{}
+		})
 	}
+	return tea.Batch(cmds...)
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {

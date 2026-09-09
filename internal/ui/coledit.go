@@ -498,7 +498,7 @@ func (e *columnEditor) selectionIsFlex() bool {
 	return columnCatalog[e.order[e.cursor]].width == 0
 }
 
-func (e *columnEditor) Init() tea.Cmd { return nil }
+func (e *columnEditor) Init() tea.Cmd { return e.probeHosts() }
 
 func (e *columnEditor) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// A probe landing is not a keystroke: re-read the watcher so the chips
@@ -514,10 +514,8 @@ func (e *columnEditor) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch km.String() {
 	case "up":
 		e.changeRow(-1)
-		return e, e.probeOnEnter()
 	case "down":
 		e.changeRow(1)
-		return e, e.probeOnEnter()
 	case "left":
 		e.move(-1)
 	case "right":
