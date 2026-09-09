@@ -92,9 +92,19 @@ func fetchHost(ctx context.Context, alias string) RemoteHost {
 	ctx, cancel := context.WithTimeout(ctx, hostTimeout)
 	defer cancel()
 
+	// The trailing `exit 0` is load-bearing. tmux exits 1 when no server is
+	// running, so without it a perfectly healthy machine that simply has no
+	// sessions open comes back as an ssh failure and gets reported UNREACHABLE
+	// -- measured on a live host: ubuntu-homelab answers in 1.3s and was shown
+	// as down purely because nobody had started tmux on it.
+	//
+	// Reachability is now what ssh says about the CONNECTION, and an empty
+	// session list is allowed to mean an empty session list. The trade: a host
+	// without tmux installed also reads as zero sessions rather than an error,
+	// which is a fair description of how many tmux sessions it has.
 	remote := "tmux list-sessions -F '" + sessionFormat + "' 2>/dev/null; " +
 		"echo " + remoteMarker + "; " +
-		"tmux list-panes -a -F '" + paneFormat + "' 2>/dev/null"
+		"tmux list-panes -a -F '" + paneFormat + "' 2>/dev/null; exit 0"
 
 	out, err := exec.CommandContext(ctx, "ssh", append(sshArgs(alias), remote)...).Output()
 	if err != nil {
