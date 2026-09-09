@@ -193,3 +193,18 @@ func AttachRemote(host, name string) error {
 // quote wraps a value for the shell tmux hands the command to. Session names
 // come from tmux itself and can contain spaces.
 func quote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
+
+// NewRemote creates a session on a remote host and attaches to it, so creating
+// somewhere else lands you there the same way creating locally does.
+//
+// Two steps rather than one `ssh -t tmux new-session`: the session is made
+// DETACHED first, so it survives if the attach that follows fails or the user
+// backs out. A session that exists is recoverable; one that was never created
+// is a silent no-op.
+func NewRemote(host, name string) error {
+	remote := "tmux new-session -d -s " + quote(name)
+	if err := exec.Command("ssh", append(sshArgs(host), remote)...).Run(); err != nil {
+		return err
+	}
+	return AttachRemote(host, name)
+}

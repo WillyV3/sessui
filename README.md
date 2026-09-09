@@ -106,6 +106,11 @@ host, and a machine that is asleep stays listed rather than disappearing.
 session named `host/name`. After that it is an ordinary local session, so every
 later switch is instant and it stops appearing twice.
 
+Creating works the same way. Type a name that matches nothing and the footer
+offers the machines; `←→` picks one, `enter` creates it there and takes you to
+it. `enter` on its own still creates locally, so choosing a machine costs a
+keystroke only when you want one.
+
 Requires only that `ssh -o BatchMode=yes <host> true` works — key auth, no
 prompt. sessui shells out to `ssh`, so `~/.ssh/config` governs everything:
 ProxyJump, certificates, agent forwarding, Tailscale names. Nothing is

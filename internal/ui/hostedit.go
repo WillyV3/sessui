@@ -160,3 +160,77 @@ func (e *columnEditor) probeOnEnter() tea.Cmd {
 	e.hostProbed = true
 	return refreshHostsCmd(e.watcher, e.hosts)
 }
+
+// --- creating a session somewhere else -------------------------------------
+
+// creating reports the one state in which enter CREATES rather than switches:
+// text typed, nothing matched. Only then does a target matter, and only then
+// are ←→ free -- there is no selection for them to move.
+func (m Model) creating() bool {
+	if _, ok := m.selected(); ok {
+		return false
+	}
+	return strings.TrimSpace(m.list.FilterInput.Value()) != ""
+}
+
+// createTargets is local first, then every watched host. Local leads because
+// it is the overwhelmingly common answer and the default must cost nothing.
+func (m Model) createTargets() []string {
+	return append([]string{""}, m.cfg.Hosts...)
+}
+
+func (m *Model) moveCreateTarget(delta int) {
+	n := len(m.createTargets())
+	m.createTarget = min(max(m.effectiveTarget()+delta, 0), n-1)
+	m.createTargetFor = strings.TrimSpace(m.list.FilterInput.Value())
+}
+
+// effectiveTarget is the chosen index, or local if the name has changed since
+// it was chosen -- the choice belongs to a name, not to the session.
+func (m Model) effectiveTarget() int {
+	if strings.TrimSpace(m.list.FilterInput.Value()) != m.createTargetFor {
+		return 0
+	}
+	return m.createTarget
+}
+
+// createHost is the chosen machine, "" for local.
+func (m Model) createHost() string {
+	t := m.createTargets()
+	i := m.effectiveTarget()
+	if i <= 0 || i >= len(t) {
+		return ""
+	}
+	return t[i]
+}
+
+// renderCreateBar replaces the help line while a name is being typed that
+// matches nothing. It is only drawn when there is a choice to make: with no
+// watched hosts there is nothing to pick, so the line stays as it was.
+func (m Model) renderCreateBar() string {
+	targets := m.createTargets()
+	if len(targets) < 2 {
+		return ""
+	}
+	name := strings.TrimSpace(m.list.FilterInput.Value())
+
+	var chips []string
+	for i, host := range targets {
+		label := host
+		if host == "" {
+			label = "local"
+		} else {
+			label = hostMark(m.watcher.Snapshot([]string{host})[0]) + " " + host
+		}
+		if i == m.effectiveTarget() {
+			chips = append(chips, highlightCell(m.styles.selectedBG, m.styles.Header.Render(label)))
+		} else {
+			chips = append(chips, m.styles.Muted.Render(label))
+		}
+	}
+	return m.styles.Muted.Render("create "+quoteName(name)+" on ") +
+		strings.Join(chips, "  ") +
+		m.styles.Muted.Render("   ←→ machine")
+}
+
+func quoteName(s string) string { return `"` + s + `"` }

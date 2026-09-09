@@ -133,6 +133,16 @@ type Model struct {
 	// mutex and bubbletea passes Models by value -- copying one would be a
 	// data race that go vet catches as copylocks.
 	watcher *session.Watcher
+	// createTarget is which machine a NEW session is made on: 0 is local,
+	// 1..n index cfg.Hosts. It only matters while the filter matches nothing
+	// (the only moment enter creates rather than switches) and resets the
+	// instant the filter changes, so it can never silently outlive the intent
+	// that set it.
+	createTarget int
+	// createTargetFor is the name the target was chosen FOR. Retype the name
+	// and the choice lapses: picking a machine for "api" must not silently
+	// still apply after you backspace it away and type "notes".
+	createTargetFor string
 }
 
 // whoAmI is "user@host", degrading to whichever half is available rather than
@@ -492,6 +502,16 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.list.CursorDown()
 		m.resetMarquee()
 		return m, nil
+	case tea.KeyLeft, tea.KeyRight:
+		// ←→ are unbound everywhere else in the list, and while the filter
+		// matches nothing there is no selection for them to disturb -- so the
+		// one state where enter CREATES is exactly the state where these are
+		// free to say where. Enter alone still creates locally: picking a
+		// machine costs a keystroke only when you want one.
+		if m.creating() {
+			m.moveCreateTarget(map[tea.KeyType]int{tea.KeyLeft: -1, tea.KeyRight: 1}[msg.Type])
+		}
+		return m, nil
 	}
 
 	switch {
@@ -590,6 +610,9 @@ func (m Model) selectOrCreate() (tea.Model, tea.Cmd) {
 			return m, doAndQuit(func() error { return session.Switch(name) })
 		}
 	}
+	if host := m.createHost(); host != "" {
+		return m, doAndQuit(func() error { return session.NewRemote(host, name) })
+	}
 	return m, doAndQuit(func() error { return session.New(name) })
 }
 
@@ -671,6 +694,11 @@ func (m Model) footerLine() string {
 	}
 	if m.err != nil {
 		return m.styles.Error.Render("error: " + m.err.Error())
+	}
+	if m.creating() {
+		if bar := m.renderCreateBar(); bar != "" {
+			return bar
+		}
 	}
 	return m.helpLine()
 }
