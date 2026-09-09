@@ -113,11 +113,24 @@ func (w *Watcher) store(h RemoteHost) {
 	if w.hosts == nil {
 		w.hosts = make(map[string]RemoteHost)
 	}
-	// A failed poll keeps the sessions we already had and records why: a host
-	// going quiet for one cycle should dim its rows, not erase them.
-	if prev, ok := w.hosts[h.Alias]; ok && h.Err != nil {
-		h.Sessions = prev.Sessions
-		h.Seen = prev.Seen
+	// A failed poll DROPS the host's sessions. The list is what you can switch
+	// to, and a session on a machine that just refused to answer is not that --
+	// pressing enter would ssh to something unreachable.
+	//
+	// This used to keep them, on the theory that a host going quiet for one
+	// cycle should dim its rows rather than lose them. The dimming was never
+	// built, so they simply rendered as ordinary switchable rows: the failure
+	// was invisible and the offer was a lie. Erasing is the honest version, and
+	// a "blip" here means a host did not answer within hostTimeout, which is
+	// not a blip.
+	//
+	// Seen is preserved so the editor can still say when the machine last
+	// answered -- knowing it is gone is different from forgetting it existed.
+	if h.Err != nil {
+		if prev, ok := w.hosts[h.Alias]; ok {
+			h.Seen = prev.Seen
+		}
+		h.Sessions = nil
 	}
 	w.hosts[h.Alias] = h
 }
