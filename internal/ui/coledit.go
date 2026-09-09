@@ -53,6 +53,8 @@ import (
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/WillyV3/sessui/internal/session"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -94,7 +96,8 @@ const (
 	rowWidth
 	rowTheme
 	rowIcons
-	rowLast = rowIcons
+	rowHosts
+	rowLast = rowHosts
 )
 
 // palettes is the ←→ cycle order on the theme row.
@@ -175,6 +178,17 @@ type columnEditor struct {
 	// sequence. Hiding does not move a column; it flags it, so hide-then-show
 	// puts it back exactly where it was. The strip is order's visible
 	// entries, the shelf its hidden ones.
+	// hosts is every machine discovery found; hostWatched is the subset whose
+	// sessions the list shows. hostState is the watcher's view, re-read
+	// whenever a probe lands so the chips fill in as answers arrive rather
+	// than freezing the panel until every host has replied.
+	hosts       []string
+	hostWatched map[string]bool
+	hostState   map[string]session.RemoteHost
+	hostCursor  int
+	hostProbed  bool
+	watcher     *session.Watcher
+
 	order  []columnID
 	hidden map[columnID]bool
 	// widths is a per-column resize override, 0 = catalog default -- the
@@ -224,6 +238,25 @@ func (e *columnEditor) withTheme(t ThemeConfig, g glyphSet, restyle func(ThemeCo
 // re-tints bubbles/help onto them -- Header and Help are already the right
 // colours for "key" and "de-emphasised description," so this is a straight
 // reuse instead of help's baked-in greys.
+// withHosts hands the editor the discovered machines, the ones already
+// watched, and the cache to read reachability from. Chained like withTheme so
+// the constructor keeps one job.
+func (e *columnEditor) withHosts(hosts, watched []string, w *session.Watcher) *columnEditor {
+	e.hosts, e.watcher = hosts, w
+	e.hostWatched = make(map[string]bool, len(watched))
+	for _, h := range watched {
+		e.hostWatched[h] = true
+		// A host the user configured but discovery no longer sees (renamed in
+		// ssh config, say) still belongs in the row -- otherwise unwatching it
+		// would be impossible.
+		if !slices.Contains(e.hosts, h) {
+			e.hosts = append(e.hosts, h)
+		}
+	}
+	e.syncHostState()
+	return e
+}
+
 func (e *columnEditor) tint() {
 	e.styles = e.restyle(e.theme, e.icons)
 	e.help.Styles.ShortKey = e.styles.Header
@@ -351,6 +384,10 @@ func (e *columnEditor) step(from, delta int, want bool) int {
 // entries between them are skipped over, not disturbed. On the width row
 // ←/→ is the same as +/-: one control, both natural keys.
 func (e *columnEditor) move(delta int) {
+	if e.row == rowHosts {
+		e.hostMove(delta)
+		return
+	}
 	switch e.row {
 	case rowStrip:
 		next := e.step(e.cursor, delta, false)
@@ -396,6 +433,10 @@ func (e *columnEditor) changeRow(delta int) {
 // (which reappears in the strip at its original position). Each row's cursor
 // is then re-seated on an entry that still belongs to it.
 func (e *columnEditor) toggle() {
+	if e.row == rowHosts {
+		e.hostToggle()
+		return
+	}
 	switch e.row {
 	case rowStrip:
 		if e.cursor < 0 {
@@ -459,6 +500,12 @@ func (e *columnEditor) selectionIsFlex() bool {
 func (e *columnEditor) Init() tea.Cmd { return nil }
 
 func (e *columnEditor) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// A probe landing is not a keystroke: re-read the watcher so the chips
+	// update in place while the user is still looking at them.
+	if _, ok := msg.(hostsRefreshedMsg); ok {
+		e.syncHostState()
+		return e, nil
+	}
 	km, ok := msg.(tea.KeyMsg)
 	if !ok {
 		return e, nil
@@ -466,8 +513,10 @@ func (e *columnEditor) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch km.String() {
 	case "up":
 		e.changeRow(-1)
+		return e, e.probeOnEnter()
 	case "down":
 		e.changeRow(1)
+		return e, e.probeOnEnter()
 	case "left":
 		e.move(-1)
 	case "right":
@@ -518,7 +567,7 @@ func (e *columnEditor) result() (finished bool, apply tea.Cmd) {
 	if e.abandoned {
 		return true, nil
 	}
-	msg := editorAppliedMsg{columns: e.Result(), popupWidth: e.popupWidth, theme: e.theme, icons: e.icons}
+	msg := editorAppliedMsg{columns: e.Result(), popupWidth: e.popupWidth, theme: e.theme, icons: e.icons, hosts: e.hostResult()}
 	return true, func() tea.Msg { return msg }
 }
 
@@ -723,6 +772,7 @@ func (e *columnEditor) View() string {
 		e.renderWidthRow(width),
 		e.renderThemeRow(width),
 		e.renderIconsRow(width),
+		e.renderHostsRow(width),
 		"",
 		e.preview(e.styles, layout),
 	)

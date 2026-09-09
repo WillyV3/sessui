@@ -42,6 +42,8 @@ type editorAppliedMsg struct {
 	popupWidth int // for @sessui-width; takes effect on the next open
 	theme      ThemeConfig
 	icons      glyphSet
+	// hosts is the watched set from the hosts row.
+	hosts []string
 }
 
 // restyle applies a theme choice process-wide -- the glyph set, the icon
@@ -287,6 +289,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// the list comes back already in the chosen look.
 		m.columns = msg.columns
 		m.cfg.Columns, m.cfg.Theme, m.cfg.Icons = msg.columns, msg.theme, msg.icons
+		// Watching a new host must show its sessions now, not on the next 15s
+		// tick -- the editor just probed them, so the cache is already warm and
+		// the reload below is a cache read.
+		hostsChanged := !slices.Equal(m.cfg.Hosts, msg.hosts)
+		m.cfg.Hosts = msg.hosts
 		palette, styles := restyle(msg.theme, msg.icons)
 		m.styles, m.delegate.styles = styles, styles
 		m.huhTheme, m.help, m.list.Styles = newHuhTheme(palette), newHelp(palette), themedListStyles(palette)
@@ -301,6 +308,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = err
 		}
 		m.relayout()
+		if hostsChanged {
+			return m, reloadCmd(m.watcher, m.cfg.Hosts)
+		}
 		return m, nil
 
 	case tickMsg:
@@ -328,6 +338,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(hostTickCmd(), refreshHostsCmd(m.watcher, m.cfg.Hosts))
 
 	case hostsRefreshedMsg:
+		// The editor is the one asking while it is open -- it renders the
+		// reachability of every host, so it needs this before the list does.
+		// Model's own switch runs BEFORE the overlay fallthrough at the bottom
+		// of Update, so without this the chips never learn anything.
+		if m.overlay != nil {
+			return m.updateOverlay(msg)
+		}
 		return m, reloadCmd(m.watcher, m.cfg.Hosts)
 
 	case reloadMsg:
@@ -505,7 +522,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, appKeys.Columns):
 		m.overlay = newColumnEditor(m.styles, m.columns, m.showPeer, m.usableWidth(), session.PopupWidth(), m.editorPreview).
-			withTheme(m.cfg.Theme, m.cfg.Icons, func(t ThemeConfig, g glyphSet) Styles { _, s := restyle(t, g); return s })
+			withTheme(m.cfg.Theme, m.cfg.Icons, func(t ThemeConfig, g glyphSet) Styles { _, s := restyle(t, g); return s }).
+			withHosts(session.DiscoverHosts(), m.cfg.Hosts, m.watcher)
 		return m, m.overlay.Init()
 
 	}

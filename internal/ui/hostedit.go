@@ -1,0 +1,162 @@
+// The hosts row of the settings editor.
+//
+// Same surface, same verbs. Columns are edited by arrowing across the header
+// the table already draws; hosts are edited by arrowing across the machines
+// whose sessions the list already shows, and the preview underneath gains and
+// loses rows as you toggle. Nothing here is a settings form.
+//
+// One row, one cursor axis -- watched machines first, then the rest as chips,
+// exactly the strip/shelf split the column rows use. `space` toggles, which is
+// what it means on the shelf too. `enter` is deliberately unbound: it means
+// arm-to-move on the strip, hosts have no order to change, and a row-specific
+// meaning would break "the same verbs always mean the same thing".
+package ui
+
+import (
+	"fmt"
+	"sort"
+	"strings"
+
+	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/WillyV3/sessui/internal/session"
+)
+
+// Host reachability marks. Plain Unicode, not Nerd Font PUA, with ASCII
+// stand-ins for a terminal without one -- the same rule every other glyph here
+// follows.
+func hostMark(h session.RemoteHost) string {
+	switch {
+	case h.Seen.IsZero() && h.Err == nil:
+		return glyphOr('◌', "?") // never answered yet -- still asking
+	case h.Err != nil:
+		return glyphOr('○', "x")
+	default:
+		return glyphOr('●', "*")
+	}
+}
+
+// hostOrder is the row's left-to-right sequence: watched machines first in the
+// order the user configured them, then everything else discovered.
+//
+// Unwatched hosts sort reachable-first. Discovery's job is to OFFER, so a
+// machine that is asleep is still listed -- hiding it would be the same mistake
+// as polling it automatically -- but the ones that can actually be added right
+// now come first.
+func (e *columnEditor) hostOrder() []string {
+	watched := make([]string, 0, len(e.hostWatched))
+	for _, h := range e.hosts {
+		if e.hostWatched[h] {
+			watched = append(watched, h)
+		}
+	}
+	rest := make([]string, 0, len(e.hosts))
+	for _, h := range e.hosts {
+		if !e.hostWatched[h] {
+			rest = append(rest, h)
+		}
+	}
+	sort.SliceStable(rest, func(i, j int) bool {
+		ri := e.hostState[rest[i]].Err == nil && !e.hostState[rest[i]].Seen.IsZero()
+		rj := e.hostState[rest[j]].Err == nil && !e.hostState[rest[j]].Seen.IsZero()
+		return ri && !rj
+	})
+	return append(watched, rest...)
+}
+
+// hostMove walks the cursor along the row.
+func (e *columnEditor) hostMove(delta int) {
+	n := len(e.hostOrder())
+	if n == 0 {
+		return
+	}
+	e.hostCursor = min(max(e.hostCursor+delta, 0), n-1)
+}
+
+// hostToggle watches or unwatches the host under the cursor. Toggling is the
+// whole interaction: there is no add/remove distinction to learn, and the row
+// re-orders under the cursor so the effect is visible immediately.
+func (e *columnEditor) hostToggle() {
+	order := e.hostOrder()
+	if e.hostCursor < 0 || e.hostCursor >= len(order) {
+		return
+	}
+	alias := order[e.hostCursor]
+	if e.hostWatched == nil {
+		e.hostWatched = map[string]bool{}
+	}
+	e.hostWatched[alias] = !e.hostWatched[alias]
+}
+
+// hostResult is the watched set in the user's configured order, for Config.
+func (e *columnEditor) hostResult() []string {
+	var out []string
+	for _, h := range e.hosts {
+		if e.hostWatched[h] {
+			out = append(out, h)
+		}
+	}
+	return out
+}
+
+func (e *columnEditor) renderHostsRow(width int) string {
+	selected := e.row == rowHosts
+	order := e.hostOrder()
+	if len(order) == 0 {
+		return e.controlRow("hosts", e.styles.Muted.Render("no hosts in ~/.ssh/config"), "", width)
+	}
+
+	var chips []string
+	for i, alias := range order {
+		st := e.hostState[alias]
+		watched := e.hostWatched[alias]
+
+		// The mark is on every chip, watched or not: "which of these can I
+		// add right now" is the question this row exists to answer, and an
+		// unwatched host with no state is exactly the one you cannot judge.
+		// Watched-ness is carried by colour and the session count instead.
+		text := hostMark(st) + " " + alias
+		if watched && st.Err == nil && len(st.Sessions) > 0 {
+			text += fmt.Sprintf(" %d", len(st.Sessions))
+		}
+
+		switch {
+		case selected && i == e.hostCursor:
+			chips = append(chips, highlightCell(e.styles.selectedBG, e.styles.Header.Render(text)))
+		case watched:
+			chips = append(chips, e.styles.PeerUp.Render(text))
+		default:
+			chips = append(chips, e.styles.Muted.Render(text))
+		}
+	}
+
+	hint := fmt.Sprintf("%d watched", len(e.hostResult()))
+	return e.controlRow("hosts", strings.Join(chips, "   "), hint, width)
+}
+
+// syncHostState re-reads the watcher's cache. Called when a probe lands, so a
+// chip goes from "still asking" to reachable or not without the panel having
+// blocked on it.
+func (e *columnEditor) syncHostState() {
+	if e.watcher == nil {
+		return
+	}
+	if e.hostState == nil {
+		e.hostState = make(map[string]session.RemoteHost, len(e.hosts))
+	}
+	for _, h := range e.watcher.Snapshot(e.hosts) {
+		e.hostState[h.Alias] = h
+	}
+}
+
+// probeOnEnter starts one fan-out the first time the cursor reaches the hosts
+// row -- across EVERY discovered machine, not just the watched ones, because
+// the question the shelf has to answer is "which of these can I add right now".
+// Once per editor: arrowing up and down the rows must not re-poll the fleet.
+func (e *columnEditor) probeOnEnter() tea.Cmd {
+	if e.row != rowHosts || e.hostProbed || e.watcher == nil || len(e.hosts) == 0 {
+		return nil
+	}
+	e.hostProbed = true
+	return refreshHostsCmd(e.watcher, e.hosts)
+}
