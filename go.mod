@@ -8,6 +8,7 @@ require (
 	github.com/charmbracelet/huh v1.0.0
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/charmbracelet/x/ansi v0.9.3
+	github.com/kevinburke/ssh_config v1.6.0
 )
 
 require (
