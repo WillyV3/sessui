@@ -248,6 +248,21 @@ Arriving on the row starts one fan-out across every discovered machine, not
 just watched ones, because "which of these can I add right now" is the question
 the row exists to answer. Chips resolve in place as replies land.
 
+A chip plays a fill as its machine answers: `md-circle_slice_1` through `_8`,
+then `md-circle`, then the ordinary dot -- one family drawn at one size, so it
+reads as a circle filling rather than glyphs of different sizes swapping. It
+ends on exactly the mark the row would have shown anyway, so the finished UI is
+unchanged; only the transition into it is new. The tick runs solely while a chip
+is mid-animation and stops on its own. Opening against a warm cache marks
+already-reachable hosts as settled rather than replaying it. ASCII mode does not
+animate -- the frames are PUA codepoints and would flicker through identical
+stand-ins.
+
+This only reads as an animation because chips resolve INDEPENDENTLY:
+`refreshHostsCmd` is one Cmd per host, not one that waits on all of them. A
+single Cmd reported nothing until the slowest machine answered, so with a
+sleeping laptop in the list every chip sat unresolved until the full timeout.
+
 The row is a **viewport**, not a line. With sixteen machines it is wider than a
 112-column popup, and before that the cursor could sit on host 12 while the row
 still showed 1-8 — `space` would toggle something invisible. It scrolls like a
