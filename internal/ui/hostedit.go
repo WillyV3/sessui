@@ -1,0 +1,350 @@
+package ui
+
+import (
+	"fmt"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/charmbracelet/lipgloss"
+
+	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/WillyV3/sessui/internal/session"
+)
+
+// The hosts row of the settings editor. Same surface, same verbs as the
+// column rows: watched machines first, then the rest as chips, and space
+// toggles. enter is deliberately unbound -- it means arm-to-move on the
+// strip, and hosts have no order to change.
+
+// hostArrival is the fill a chip plays the moment a machine answers: a circle
+// filling by eighths, one frame past full, then the ordinary dot. One glyph
+// family at one size, so it reads as a fill rather than glyphs of different
+// sizes swapping. It ends on the mark the row would have shown anyway.
+var hostArrival = []rune{
+	0xF0A9E, 0xF0A9F, 0xF0AA0, 0xF0AA1,
+	0xF0AA2, 0xF0AA3, 0xF0AA4, 0xF0AA5,
+	0xF0765,
+}
+
+const hostAnimStep = 90 * time.Millisecond
+
+// hostMark is a host's reachability: plain Unicode with ASCII stand-ins.
+func hostMark(h session.RemoteHost) string {
+	switch {
+	case h.Seen.IsZero() && h.Err == nil:
+		return glyphOr('◌', "?") // never answered yet
+	case h.Err != nil:
+		return glyphOr('○', "x")
+	default:
+		return glyphOr('●', "*")
+	}
+}
+
+// hostOrder is the row's left-to-right sequence: watched machines in the
+// order configured, then everything else discovered, reachable first.
+// Discovery's job is to offer, so an asleep machine is still listed.
+func (e *columnEditor) hostOrder() []string {
+	watched := make([]string, 0, len(e.hostWatched))
+	for _, h := range e.hosts {
+		if e.hostWatched[h] {
+			watched = append(watched, h)
+		}
+	}
+	rest := make([]string, 0, len(e.hosts))
+	for _, h := range e.hosts {
+		if !e.hostWatched[h] {
+			rest = append(rest, h)
+		}
+	}
+	sort.SliceStable(rest, func(i, j int) bool {
+		ri := e.hostState[rest[i]].Err == nil && !e.hostState[rest[i]].Seen.IsZero()
+		rj := e.hostState[rest[j]].Err == nil && !e.hostState[rest[j]].Seen.IsZero()
+		return ri && !rj
+	})
+	return append(watched, rest...)
+}
+
+func (e *columnEditor) hostMove(delta int) {
+	n := len(e.hostOrder())
+	if n == 0 {
+		return
+	}
+	e.hostCursor = min(max(e.hostCursor+delta, 0), n-1)
+}
+
+// hostToggle watches or unwatches the host under the cursor. The row
+// re-orders under the cursor so the effect is visible immediately.
+func (e *columnEditor) hostToggle() {
+	order := e.hostOrder()
+	if e.hostCursor < 0 || e.hostCursor >= len(order) {
+		return
+	}
+	alias := order[e.hostCursor]
+	if e.hostWatched == nil {
+		e.hostWatched = map[string]bool{}
+	}
+	e.hostWatched[alias] = !e.hostWatched[alias]
+}
+
+// hostResult is the watched set in configured order, for Config.
+func (e *columnEditor) hostResult() []string {
+	var out []string
+	for _, h := range e.hosts {
+		if e.hostWatched[h] {
+			out = append(out, h)
+		}
+	}
+	return out
+}
+
+func (e *columnEditor) renderHostsRow(width int) string {
+	selected := e.row == rowHosts
+	order := e.hostOrder()
+	if len(order) == 0 {
+		return e.controlRow("hosts", e.styles.Muted.Render("no hosts in ~/.ssh/config"), "", width)
+	}
+
+	var chips []string
+	for i, alias := range order {
+		st := e.hostState[alias]
+		watched := e.hostWatched[alias]
+
+		// The mark is on every chip: "which of these can I add right now" is
+		// the question the row answers. Watched-ness is carried by colour and
+		// the session count.
+		mark := hostMark(st)
+		if f := e.arrivalFrame(alias); f != "" {
+			mark = f
+		}
+		text := mark + " " + alias
+		if watched && st.Err == nil && len(st.Sessions) > 0 {
+			text += fmt.Sprintf(" %d", len(st.Sessions))
+		}
+
+		switch {
+		case selected && i == e.hostCursor:
+			chips = append(chips, highlightCell(e.styles.selectedBG, e.styles.Header.Render(text)))
+		case watched:
+			chips = append(chips, e.styles.PeerUp.Render(text))
+		default:
+			chips = append(chips, e.styles.Muted.Render(text))
+		}
+	}
+
+	hint := fmt.Sprintf("%d watched", len(e.hostResult()))
+	// controlRow spends cursorWidth + captionWidth on the left and anchors the
+	// hint right; what is left is the viewport.
+	budget := width - cursorWidth - captionWidth - lipgloss.Width(hint) - 1
+	return e.controlRow("hosts", e.windowChips(chips, budget), hint, width)
+}
+
+// chipGap separates chips. Declared once because the viewport must measure
+// with the same value the join uses.
+const chipGap = "   "
+
+// windowChips scrolls the row like a table rather than letting it run off the
+// edge: a fleet is wider than a popup, and a cursor on a chip that is not
+// drawn would toggle something invisible.
+//
+// The window moves only when the cursor would leave it, so chips stay put
+// while you arrow within view. ‹ and › mark more in that direction and are
+// inside the budget, never added on top of it.
+func (e *columnEditor) windowChips(chips []string, budget int) string {
+	if len(chips) == 0 || budget <= 0 {
+		return ""
+	}
+	if e.hostCursor < e.hostScroll {
+		e.hostScroll = e.hostCursor
+	}
+
+	for {
+		start := e.hostScroll
+		end, used := start, 0
+		for end < len(chips) {
+			w := lipgloss.Width(chips[end])
+			if end > start {
+				w += len(chipGap)
+			}
+			// Reserve a cell for the marker whenever chips remain beyond here.
+			reserve := 0
+			if end < len(chips)-1 {
+				reserve = 2
+			}
+			if used+w+reserve > budget {
+				break
+			}
+			used += w
+			end++
+		}
+		if end == start { // one chip wider than the whole row: show it anyway
+			end = start + 1
+		}
+		// Cursor still off the right edge: give up a chip on the left and
+		// measure again rather than guessing how much that frees.
+		if e.hostCursor >= end && start < len(chips)-1 {
+			e.hostScroll++
+			continue
+		}
+		out := strings.Join(chips[start:end], chipGap)
+		if start > 0 {
+			out = e.styles.Muted.Render("‹ ") + out
+		}
+		if end < len(chips) {
+			out += e.styles.Muted.Render(" ›")
+		}
+		return out
+	}
+}
+
+// syncHostState re-reads the watcher's cache, so a chip goes from "still
+// asking" to reachable or not without the panel having blocked on it.
+func (e *columnEditor) syncHostState() {
+	if e.watcher == nil {
+		return
+	}
+	if e.hostState == nil {
+		e.hostState = make(map[string]session.RemoteHost, len(e.hosts))
+	}
+	for _, h := range e.watcher.Snapshot(e.hosts) {
+		e.hostState[h.Alias] = h
+	}
+}
+
+// probeHosts starts one fan-out across every discovered machine, not just
+// the watched ones. Called from Init, the moment the editor opens, since a
+// cold fan-out takes seconds and the user spends the first of them arrowing
+// down. Once per editor: moving between rows must not re-poll.
+func (e *columnEditor) probeHosts() tea.Cmd {
+	if e.hostProbed || e.watcher == nil || len(e.hosts) == 0 {
+		return nil
+	}
+	e.hostProbed = true
+	return refreshHostsCmd(e.watcher, e.hosts)
+}
+
+// --- creating a session somewhere else -------------------------------------
+
+// creating reports the one state in which enter creates rather than switches:
+// text typed, nothing matched. Only then does a target matter, and only then
+// are ←→ free.
+func (m Model) creating() bool {
+	if _, ok := m.selected(); ok {
+		return false
+	}
+	return strings.TrimSpace(m.list.FilterInput.Value()) != ""
+}
+
+// createTargets is local first, then every watched host. Local leads because
+// the default must cost nothing.
+func (m Model) createTargets() []string {
+	return append([]string{""}, m.cfg.Hosts...)
+}
+
+func (m *Model) moveCreateTarget(delta int) {
+	n := len(m.createTargets())
+	m.createTarget = min(max(m.effectiveTarget()+delta, 0), n-1)
+	m.createTargetFor = strings.TrimSpace(m.list.FilterInput.Value())
+}
+
+// effectiveTarget is the chosen index, or local if the name has changed since
+// it was chosen: the choice belongs to a name.
+func (m Model) effectiveTarget() int {
+	if strings.TrimSpace(m.list.FilterInput.Value()) != m.createTargetFor {
+		return 0
+	}
+	return m.createTarget
+}
+
+// createHost is the chosen machine, "" for local.
+func (m Model) createHost() string {
+	t := m.createTargets()
+	i := m.effectiveTarget()
+	if i <= 0 || i >= len(t) {
+		return ""
+	}
+	return t[i]
+}
+
+// renderCreateBar replaces the help line while a name that matches nothing
+// is being typed. Drawn only when there is a choice to make.
+func (m Model) renderCreateBar() string {
+	targets := m.createTargets()
+	if len(targets) < 2 {
+		return ""
+	}
+	name := strings.TrimSpace(m.list.FilterInput.Value())
+
+	var chips []string
+	for i, host := range targets {
+		label := host
+		if host == "" {
+			label = "local"
+		} else {
+			label = hostMark(m.watcher.Snapshot([]string{host})[0]) + " " + host
+		}
+		if i == m.effectiveTarget() {
+			chips = append(chips, highlightCell(m.styles.selectedBG, m.styles.Header.Render(label)))
+		} else {
+			chips = append(chips, m.styles.Muted.Render(label))
+		}
+	}
+	return m.styles.Muted.Render("create "+quoteName(name)+" on ") +
+		strings.Join(chips, "  ") +
+		m.styles.Muted.Render("   ←→ machine")
+}
+
+func quoteName(s string) string { return `"` + s + `"` }
+
+// arrivalFrame is the fill glyph for a host that just came online, or "" once
+// the animation is done. ASCII mode never animates: the frames are PUA
+// codepoints and would flicker through identical stand-ins.
+func (e *columnEditor) arrivalFrame(alias string) string {
+	if activeGlyphs == glyphsASCII {
+		return ""
+	}
+	at, ok := e.hostArrived[alias]
+	if !ok {
+		return ""
+	}
+	i := int(time.Since(at) / hostAnimStep)
+	if i < 0 || i >= len(hostArrival) {
+		return ""
+	}
+	return string(hostArrival[i])
+}
+
+// noteArrivals records hosts that became reachable since the last sync and
+// reports whether any animation is running. settled marks a host as arrived
+// in the past, so an editor opening against a warm cache does not replay the
+// fill for machines that answered minutes ago.
+func (e *columnEditor) noteArrivals(settled bool) bool {
+	if e.hostArrived == nil {
+		e.hostArrived = make(map[string]time.Time, len(e.hosts))
+	}
+	stamp := time.Now()
+	if settled {
+		stamp = stamp.Add(-hostAnimStep * time.Duration(len(hostArrival)+1))
+	}
+	for alias, h := range e.hostState {
+		if h.Err != nil || h.Seen.IsZero() {
+			continue
+		}
+		if _, seen := e.hostArrived[alias]; !seen {
+			e.hostArrived[alias] = stamp
+		}
+	}
+	for alias := range e.hostArrived {
+		if e.arrivalFrame(alias) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+type hostAnimMsg struct{}
+
+func hostAnimCmd() tea.Cmd {
+	return tea.Tick(hostAnimStep, func(time.Time) tea.Msg { return hostAnimMsg{} })
+}
