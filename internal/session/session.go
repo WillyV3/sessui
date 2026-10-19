@@ -9,7 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -83,8 +83,9 @@ var shellCommands = map[string]bool{
 const (
 	sessionFormat = "#{session_name}|#{session_created}|#{session_activity}|#{session_attached}|#{session_windows}|#{session_last_attached}"
 	// pane_title is last because it is the only field that can contain "|";
-	// parsePanes splits with a bounded SplitN for that reason.
-	paneFormat = "#{session_name}|#{pane_current_path}|#{pane_current_command}|#{window_active}|#{pane_active}|#{window_bell_flag}|#{pane_id}|#{pane_title}"
+	// parsePanes splits with a bounded SplitN for that reason. pane_height is
+	// carried so agent panes can be captured in one batch: see capturePanes.
+	paneFormat = "#{session_name}|#{pane_current_path}|#{pane_current_command}|#{window_active}|#{pane_active}|#{window_bell_flag}|#{pane_id}|#{pane_height}|#{pane_title}"
 
 	// capturePaneLines is how much of an agent pane's tail is read to tell
 	// Working from Idle.
@@ -94,12 +95,12 @@ const (
 // List builds the current session list from tmux and, best-effort, cp3,
 // excluding the session the caller is attached to.
 func List() ([]Session, error) {
-	current, sessOut, paneOut, err := tmuxSnapshot()
+	reading, err := readTmux(lastPanes.get())
 	if err != nil {
 		return nil, err
 	}
-	sessions, agentPane := Build(sessOut, paneOut, roster.get(), current)
-	classifyAgents(sessions, agentPane)
+	sessions, agentPane := Build(reading.sessOut, reading.paneOut, roster.get(), reading.current)
+	classifyAgents(sessions, agentPane, reading.captures)
 	return sessions, nil
 }
 
@@ -108,75 +109,162 @@ func List() ([]Session, error) {
 // behind it. Peer and agent state are absent until then, which is honest:
 // unknown, not zero.
 func ListFast() ([]Session, error) {
-	current, sessOut, paneOut, err := tmuxSnapshot()
+	reading, err := readTmux(nil)
 	if err != nil {
 		return nil, err
 	}
-	sessions, _ := Build(sessOut, paneOut, peerFleet{}, current)
+	sessions, _ := Build(reading.sessOut, reading.paneOut, peerFleet{}, reading.current)
 	return sessions, nil
 }
 
-// tmuxSnapshot reads the attached client's session, every session and every
-// pane in ONE tmux invocation. tmux chains commands with `;` and prints their
-// results in order; the process spawn and socket round trip are the cost here,
-// not the parsing, so this is three spawns cheaper than asking separately.
-// display-message -p doubles as the marker printer.
-func tmuxSnapshot() (current, sessOut, paneOut string, err error) {
-	out, err := runTmux(
+// tmuxReading is one read of the tmux server: everything a list build needs
+// from it, out of one process.
+type tmuxReading struct {
+	current  string
+	sessOut  string
+	paneOut  string
+	captures map[string]string // by pane id; nil when none were asked for, or the batch did not add up
+}
+
+// readTmux asks tmux for the attached client's session, every session, every
+// pane and — speculatively — the contents of the panes the PREVIOUS build
+// read, in a SINGLE invocation. tmux chains commands with `;` and prints their
+// results in order; the process spawn and socket round trip dominate, so one
+// chained call costs what its first command costs.
+//
+// The speculation is what keeps a refresh at one process rather than two: an
+// agent pane cannot be named before the pane list comes back, so the last
+// build's panes are read on the assumption the list has not changed, which on
+// a settled session list is exactly right. A wrong guess costs one extra call
+// for the panes that were missed, never a wrong answer — and it cannot corrupt
+// the session list, because every session and pane record is printed before
+// the first capture runs. A pane that closes mid-call truncates only the
+// captures after it, which the height arithmetic then rejects wholesale.
+func readTmux(speculate []agentPaneRef) (tmuxReading, error) {
+	args := []string{
 		"display-message", "-p", "#{client_session}", ";",
 		"display-message", "-p", listMarkerSessions, ";",
 		"list-sessions", "-F", sessionFormat, ";",
 		"display-message", "-p", listMarkerPanes, ";",
 		"list-panes", "-a", "-F", paneFormat,
-	)
+	}
+	if len(speculate) > 0 {
+		args = append(args, ";", "display-message", "-p", listMarkerCaptures)
+		for _, ref := range speculate {
+			args = append(args, ";", "capture-pane", "-p", "-t", ref.ID)
+		}
+	}
+
+	out, err := runTmux(args...)
 	if err != nil {
-		return "", "", "", err
+		return tmuxReading{}, err
 	}
 
 	current, rest, ok := strings.Cut(out, "\n"+listMarkerSessions+"\n")
 	if !ok {
-		return "", "", "", fmt.Errorf("tmux batch: session marker missing")
+		return tmuxReading{}, fmt.Errorf("tmux batch: session marker missing")
 	}
-	sessOut, paneOut, ok = strings.Cut(rest, listMarkerPanes+"\n")
+	sessOut, rest, ok := strings.Cut(rest, listMarkerPanes+"\n")
 	if !ok {
-		return "", "", "", fmt.Errorf("tmux batch: pane marker missing")
+		return tmuxReading{}, fmt.Errorf("tmux batch: pane marker missing")
 	}
-	return strings.TrimSpace(current), sessOut, paneOut, nil
+
+	reading := tmuxReading{current: strings.TrimSpace(current), sessOut: sessOut, paneOut: rest}
+	if len(speculate) > 0 {
+		paneOut, capOut, ok := strings.Cut(rest, listMarkerCaptures+"\n")
+		if !ok {
+			// The marker never printed: a capture aborted the chain early. The
+			// panes are still whole, so only the speculation is lost.
+			paneOut, _, _ = strings.Cut(rest, listMarkerCaptures)
+			reading.paneOut = paneOut
+			return reading, nil
+		}
+		reading.paneOut = paneOut
+		if captures, ok := splitCaptures(capOut, speculate, capturePaneLines); ok {
+			reading.captures = captures
+		}
+	}
+	return reading, nil
 }
 
-// Markers separating the three outputs of the batched call. They contain no
-// "|", so they cannot be mistaken for a record.
+// lastPanes is the pane set the previous build read: the basis for readTmux's
+// speculative capture. Package state because List is a package function, and
+// safe to be: a stale guess costs one extra tmux call, never a wrong row.
+var lastPanes paneMemory
+
+type paneMemory struct {
+	mu   sync.Mutex
+	refs []agentPaneRef
+}
+
+func (p *paneMemory) get() []agentPaneRef {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.refs
+}
+
+func (p *paneMemory) put(refs []agentPaneRef) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.refs = refs
+}
+
+// Markers separating the outputs of the batched call. They contain no "|", so
+// they cannot be mistaken for a record, and no pane content follows a marker
+// that a record could be read out of.
 const (
 	listMarkerSessions = "@@sessui-sessions@@"
 	listMarkerPanes    = "@@sessui-panes@@"
+	listMarkerCaptures = "@@sessui-captures@@"
 )
 
-// classifyAgents captures each agent's pane, concurrently, to tell Working
-// from Idle. Bounded by the number of agent sessions.
+// classifyAgents tells Working from Idle for every agent session.
 //
-// One capture per process on purpose. Chaining them into a single tmux call
-// trades nine spawns for one, and loses: tmux runs a chained command serially,
-// which measured four times slower than paying for the spawns in parallel.
-func classifyAgents(sessions []Session, agentPane map[string]string) {
-	var wg sync.WaitGroup
+// have holds whatever the tmux read already captured speculatively; only the
+// panes it does not cover are read again. On a settled session list that is
+// none of them, which is the point.
+func classifyAgents(sessions []Session, agentPane map[string]agentPaneRef, have map[string]string) {
+	refs := make([]agentPaneRef, 0, len(sessions))
+	row := make(map[string]int, len(sessions))
 	for i := range sessions {
 		s := &sessions[i]
 		if !s.Agent || s.State == StateNotify {
 			continue
 		}
-		paneID := agentPane[s.Name]
-		if paneID == "" {
+		ref, ok := agentPane[s.Name]
+		if !ok || ref.ID == "" {
 			continue
 		}
-		wg.Go(func() {
-			capture := capturePane(paneID, capturePaneLines)
-			s.State = Classify(true, false, capture)
-			if s.State == StateWorking {
-				s.WorkingVerb, s.WorkingElapsed = extractWorkingStatus(capture)
-			}
-		})
+		refs = append(refs, ref)
+		row[ref.ID] = i
 	}
-	wg.Wait()
+	lastPanes.put(refs)
+
+	missing := make([]agentPaneRef, 0, len(refs))
+	for _, ref := range refs {
+		if _, ok := have[ref.ID]; !ok {
+			missing = append(missing, ref)
+		}
+	}
+	captures := have
+	if len(missing) > 0 {
+		captures = make(map[string]string, len(refs))
+		for id, capture := range have {
+			captures[id] = capture
+		}
+		for id, capture := range capturePanes(missing, capturePaneLines) {
+			captures[id] = capture
+		}
+	}
+
+	for _, ref := range refs {
+		s := &sessions[row[ref.ID]]
+		capture := captures[ref.ID]
+		s.State = Classify(true, false, capture)
+		if s.State == StateWorking {
+			s.WorkingVerb, s.WorkingElapsed = extractWorkingStatus(capture)
+		}
+	}
 }
 
 // peerFleet is what cp3 reported about the fleet.
@@ -336,7 +424,7 @@ func SetPopupWidth(w int) error {
 // Build is the pure parse-and-combine step, split from List so it can be
 // exercised against captured output. It also returns each agent session's
 // pane id, which List uses to target its captures.
-func Build(sessOut, paneOut string, fleet peerFleet, current string) ([]Session, map[string]string) {
+func Build(sessOut, paneOut string, fleet peerFleet, current string) ([]Session, map[string]agentPaneRef) {
 	metas := parseSessions(sessOut)
 	cwds, apps, bell, agentPane, titles := parsePanes(paneOut)
 	peersByCWD, peersByName := indexPeers(fleet.Rows)
@@ -384,8 +472,8 @@ func Build(sessOut, paneOut string, fleet peerFleet, current string) ([]Session,
 
 	// Most recently attached first: the top row is the session you were in
 	// before this one. Stable, so never-attached sessions keep tmux's order.
-	sort.SliceStable(sessions, func(i, j int) bool {
-		return sessions[i].LastAttached.After(sessions[j].LastAttached)
+	slices.SortStableFunc(sessions, func(a, b Session) int {
+		return b.LastAttached.Compare(a.LastAttached)
 	})
 	return sessions, agentPane
 }
@@ -547,8 +635,8 @@ type sessionMeta struct {
 
 // parseSessions parses `tmux list-sessions -F sessionFormat`.
 func parseSessions(raw string) []sessionMeta {
-	var metas []sessionMeta
-	for _, line := range strings.Split(raw, "\n") {
+	metas := make([]sessionMeta, 0, strings.Count(raw, "\n"))
+	for line := range strings.SplitSeq(raw, "\n") {
 		if line == "" {
 			continue
 		}
@@ -586,30 +674,35 @@ func parseSessions(raw string) []sessionMeta {
 // commands in first-seen order, whether any window's bell is set, and the
 // agent pane's id and title -- the focused pane if it runs the agent, else
 // the first agent pane seen.
-func parsePanes(raw string) (cwds map[string]string, apps map[string][]string, bell map[string]bool, agentPane map[string]string, titles map[string]string) {
+func parsePanes(raw string) (cwds map[string]string, apps map[string][]string, bell map[string]bool, agentPane map[string]agentPaneRef, titles map[string]string) {
 	cwds = map[string]string{}
 	apps = map[string][]string{}
 	bell = map[string]bool{}
-	agentPane = map[string]string{}
+	agentPane = map[string]agentPaneRef{}
 	titles = map[string]string{}
 
 	fallbackCWD := map[string]string{}
 	activeCWD := map[string]bool{}
 	seenApp := map[string]map[string]bool{}
-	fallbackAgentPane := map[string]string{}
+	fallbackAgentPane := map[string]agentPaneRef{}
 	fallbackAgentTitle := map[string]string{}
 
-	for _, line := range strings.Split(raw, "\n") {
+	for line := range strings.SplitSeq(raw, "\n") {
 		if line == "" {
 			continue
 		}
-		f := strings.SplitN(line, "|", 8)
-		if len(f) != 8 {
+		f := strings.SplitN(line, "|", 9)
+		if len(f) != 9 {
 			continue
 		}
 		name, path, cmd := f[0], f[1], f[2]
 		windowActive, paneActive := f[3] == "1", f[4] == "1"
-		bellFlag, paneID, title := f[5] == "1", f[6], f[7]
+		bellFlag, title := f[5] == "1", f[8]
+		height, err := strconv.Atoi(f[7])
+		if err != nil {
+			continue // a pane with no height is a pane that cannot be captured
+		}
+		ref := agentPaneRef{ID: f[6], Height: height}
 
 		if _, ok := fallbackCWD[name]; !ok {
 			fallbackCWD[name] = path
@@ -634,11 +727,11 @@ func parsePanes(raw string) (cwds map[string]string, apps map[string][]string, b
 
 		if IsAgentApp(cmd) {
 			if _, ok := fallbackAgentPane[name]; !ok {
-				fallbackAgentPane[name] = paneID
+				fallbackAgentPane[name] = ref
 				fallbackAgentTitle[name] = title
 			}
 			if windowActive && paneActive {
-				agentPane[name] = paneID
+				agentPane[name] = ref
 				titles[name] = title
 			}
 		}
@@ -649,9 +742,9 @@ func parsePanes(raw string) (cwds map[string]string, apps map[string][]string, b
 			cwds[name] = path
 		}
 	}
-	for name, id := range fallbackAgentPane {
+	for name, ref := range fallbackAgentPane {
 		if _, ok := agentPane[name]; !ok {
-			agentPane[name] = id
+			agentPane[name] = ref
 			titles[name] = fallbackAgentTitle[name]
 		}
 	}

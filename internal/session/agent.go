@@ -4,6 +4,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
+	"sync"
 )
 
 // workingVerbLine matches an agent's live status line: a verb ending in an
@@ -86,13 +87,23 @@ func Classify(agent, bell bool, capture string) AgentState {
 // A line containing "done" is skipped — the completed-turn summary
 // ("✻ Sautéed for 16m · done") keeps the verb on screen after the turn ends.
 func isWorking(capture string) bool {
-	for _, line := range strings.Split(capture, "\n") {
+	for line := range strings.Lines(capture) {
+		// Gate on a byte scan before folding case or running the pattern, both
+		// of which cost orders of magnitude more. Every way a line can say
+		// "working" carries one of these three: the status shape needs its
+		// ellipsis, the interrupt hint spells it in either case, and the hammer
+		// is itself. A pane of ordinary prose matches none and is skipped whole.
+		if !strings.Contains(line, "…") &&
+			!strings.Contains(line, "⚒") &&
+			!strings.Contains(line, "nterrupt") {
+			continue
+		}
 		lower := strings.ToLower(line)
 		if strings.Contains(lower, "done") {
 			continue
 		}
-		if strings.Contains(lower, "esc to interrupt") ||
-			strings.Contains(line, "⚒") ||
+		if strings.Contains(line, "⚒") ||
+			strings.Contains(lower, "esc to interrupt") ||
 			liveStatusLine.MatchString(line) {
 			return true
 		}
@@ -121,6 +132,96 @@ func extractWorkingStatus(capture string) (verb, elapsed string) {
 		return verb, elapsed
 	}
 	return "", ""
+}
+
+// agentPaneRef is the pane an agent session's state is read from. The height
+// comes along because it is what lets several panes be captured in one call.
+type agentPaneRef struct {
+	ID     string
+	Height int
+}
+
+// capturePanes returns the tail of every pane in refs, keyed by pane id.
+//
+// One tmux process serves them all. `capture-pane -p` emits exactly
+// pane_height lines — blank lines included, alternate-screen panes included —
+// so chained captures split on the heights we already asked tmux for, with no
+// separator commands. That matters: interleaving `display-message` markers
+// between the captures to label them measured 4x SLOWER than the nine separate
+// spawns this replaces, while chaining the captures alone is faster than one.
+//
+// The split is only as good as its arithmetic, and a wrong offset would hand
+// one session another's state. So the line count is checked against the sum of
+// the heights, and anything unexpected — a pane that closed mid-call, a tmux
+// that pads differently — falls back to reading each pane on its own.
+func capturePanes(refs []agentPaneRef, n int) map[string]string {
+	switch len(refs) {
+	case 0:
+		return nil
+	case 1:
+		return map[string]string{refs[0].ID: capturePane(refs[0].ID, n)}
+	}
+
+	args := make([]string, 0, len(refs)*6)
+	total := 0
+	for _, ref := range refs {
+		if len(args) > 0 {
+			args = append(args, ";")
+		}
+		args = append(args, "capture-pane", "-p", "-t", ref.ID)
+		total += ref.Height
+	}
+
+	out, err := runTmux(args...)
+	if err == nil {
+		if captures, ok := splitCaptures(out, refs, n); ok {
+			return captures
+		}
+	}
+	return capturePanesEach(refs, n)
+}
+
+// splitCaptures cuts one batched capture into its panes, reporting false if the
+// output does not account for every line the panes claimed to have.
+func splitCaptures(out string, refs []agentPaneRef, n int) (map[string]string, bool) {
+	lines := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
+	total := 0
+	for _, ref := range refs {
+		total += ref.Height
+	}
+	if len(lines) != total {
+		return nil, false
+	}
+
+	captures := make(map[string]string, len(refs))
+	at := 0
+	for _, ref := range refs {
+		pane := lines[at : at+ref.Height]
+		if len(pane) > n {
+			pane = pane[len(pane)-n:]
+		}
+		captures[ref.ID] = strings.Join(pane, "\n")
+		at += ref.Height
+	}
+	return captures, true
+}
+
+// capturePanesEach reads every pane in its own process, concurrently. The
+// fallback for a batch that did not add up.
+func capturePanesEach(refs []agentPaneRef, n int) map[string]string {
+	captures := make(map[string]string, len(refs))
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for _, ref := range refs {
+		wg.Go(func() {
+			capture := capturePane(ref.ID, n)
+			mu.Lock()
+			captures[ref.ID] = capture
+			mu.Unlock()
+		})
+	}
+	wg.Wait()
+	return captures
 }
 
 // capturePane returns the last n lines of a pane's visible content, or "" on
