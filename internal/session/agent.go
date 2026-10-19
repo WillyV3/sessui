@@ -52,10 +52,16 @@ var agentApps = map[string]bool{
 // IsAgentApp reports whether cmd is a recognized AI coding agent command.
 func IsAgentApp(cmd string) bool { return agentApps[cmd] }
 
-// workingSpinnerGlyphs are the spinner shapes an agent prints beside its
-// status verb while generating. "·" is deliberately absent: it appears in
-// persistent status bars regardless of state, so it never discriminates.
-const workingSpinnerGlyphs = "✻✳✽✢"
+// liveStatusLine matches the whole shape of an agent's live status line: a
+// word ending in an ellipsis, then a parenthesised running clock —
+// "✽ Precipitating… (2m 17s · ↓ 8.8k tokens)".
+//
+// Every part of the shape must be on ONE line, and the clock is what makes it
+// a status line rather than page text. An idle pane holds plenty of each half
+// on its own: scrollback prose ends sentences in an ellipsis, chrome
+// parenthesises hints ("(ctrl+End)", "(shift+tab to cycle)"), and the
+// context-usage hint carries both a token count and a "↓" on unrelated lines.
+var liveStatusLine = regexp.MustCompile(`\p{L}….*\([^)]*\b\d+(?:\.\d+)?\s*[smh]\b`)
 
 // Classify derives a session's AgentState from whether it runs an agent, its
 // tmux bell flag, and the tail of its agent pane. Pure, so it can be tested
@@ -73,30 +79,21 @@ func Classify(agent, bell bool, capture string) AgentState {
 	}
 }
 
-// isWorking matches an agent's on-screen working indicators.
+// isWorking matches an agent's on-screen working indicators, line by line.
 //
-// The token counter requires "↓" alongside "tokens": a context-usage hint
-// ("/clear to save 239k tokens") carries the bare word while idle. Spinner
-// glyphs are matched per line and a line containing "done" is skipped: the
-// completed-turn summary ("✻ Sautéed for 16m · done") keeps a glyph on screen
-// after the turn ends.
+// Nothing is matched across lines: two idle lines can otherwise satisfy one
+// rule between them, which is how a pane parked at its prompt reads as busy.
+// A line containing "done" is skipped — the completed-turn summary
+// ("✻ Sautéed for 16m · done") keeps the verb on screen after the turn ends.
 func isWorking(capture string) bool {
-	lower := strings.ToLower(capture)
-
-	if strings.Contains(lower, "esc to interrupt") {
-		return true
-	}
-	if strings.Contains(capture, "⚒") {
-		return true
-	}
-	if strings.Contains(capture, "↓") && strings.Contains(lower, "tokens") {
-		return true
-	}
 	for _, line := range strings.Split(capture, "\n") {
-		if strings.Contains(line, "done") {
-			continue // completed-turn summary, not a live status line
+		lower := strings.ToLower(line)
+		if strings.Contains(lower, "done") {
+			continue
 		}
-		if workingVerbLine.MatchString(line) || strings.ContainsAny(line, workingSpinnerGlyphs) {
+		if strings.Contains(lower, "esc to interrupt") ||
+			strings.Contains(line, "⚒") ||
+			liveStatusLine.MatchString(line) {
 			return true
 		}
 	}
