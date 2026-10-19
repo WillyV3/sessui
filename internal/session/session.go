@@ -5,6 +5,7 @@ package session
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -155,29 +156,30 @@ func readTmux(speculate []agentPaneRef) (tmuxReading, error) {
 		}
 	}
 
-	out, err := runTmux(args...)
-	if err != nil {
-		return tmuxReading{}, err
-	}
+	// Partial output is an ordinary outcome here, not a failure: a chained
+	// command stops at its first error, and a speculated pane may have closed
+	// since the last build — tmux then exits non-zero having already printed
+	// every session and every pane. Discarding that would be worse than
+	// useless. The build would not get far enough to forget the dead pane, so
+	// every refresh after it would fail the same way, forever.
+	out, runErr := runTmuxPartial(args...)
 
 	current, rest, ok := strings.Cut(out, "\n"+listMarkerSessions+"\n")
 	if !ok {
-		return tmuxReading{}, fmt.Errorf("tmux batch: session marker missing")
+		return tmuxReading{}, errors.Join(errors.New("tmux batch: session marker missing"), runErr)
 	}
 	sessOut, rest, ok := strings.Cut(rest, listMarkerPanes+"\n")
 	if !ok {
-		return tmuxReading{}, fmt.Errorf("tmux batch: pane marker missing")
+		return tmuxReading{}, errors.Join(errors.New("tmux batch: pane marker missing"), runErr)
 	}
 
 	reading := tmuxReading{current: strings.TrimSpace(current), sessOut: sessOut, paneOut: rest}
 	if len(speculate) > 0 {
+		// The marker is printed before the first capture runs, so the panes end
+		// where it appears whether or not the captures that follow survived.
 		paneOut, capOut, ok := strings.Cut(rest, listMarkerCaptures+"\n")
 		if !ok {
-			// The marker never printed: a capture aborted the chain early. The
-			// panes are still whole, so only the speculation is lost.
 			paneOut, _, _ = strings.Cut(rest, listMarkerCaptures)
-			reading.paneOut = paneOut
-			return reading, nil
 		}
 		reading.paneOut = paneOut
 		if captures, ok := splitCaptures(capOut, speculate, capturePaneLines); ok {
@@ -238,11 +240,20 @@ func classifyAgents(sessions []Session, agentPane map[string]agentPaneRef, have 
 		refs = append(refs, ref)
 		row[ref.ID] = i
 	}
+
+	// The speculation was split on the heights of the PREVIOUS build, so a pane
+	// resized since then was cut at the wrong offset. The sum check in
+	// splitCaptures catches that unless two panes resized by equal and opposite
+	// amounts, which it cannot see; comparing the heights themselves can.
+	priorHeight := make(map[string]int, len(refs))
+	for _, ref := range lastPanes.get() {
+		priorHeight[ref.ID] = ref.Height
+	}
 	lastPanes.put(refs)
 
 	missing := make([]agentPaneRef, 0, len(refs))
 	for _, ref := range refs {
-		if _, ok := have[ref.ID]; !ok {
+		if _, ok := have[ref.ID]; !ok || priorHeight[ref.ID] != ref.Height {
 			missing = append(missing, ref)
 		}
 	}
@@ -351,6 +362,21 @@ func fetchPeers() peerFleet {
 		return peerFleet{Rows: parsePeersPlain(string(out)), Reachable: true}
 	}
 	return peerFleet{}
+}
+
+// runTmuxPartial runs tmux and hands back whatever it printed, error or not,
+// so a caller that can use an incomplete answer gets to decide for itself. The
+// error carries tmux's own words, which a chained command needs: the exit
+// status alone does not say which link failed.
+func runTmuxPartial(args ...string) (string, error) {
+	var stdout, stderr strings.Builder
+	cmd := exec.Command("tmux", args...)
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Run(); err != nil {
+		return stdout.String(), fmt.Errorf("tmux %s: %w: %s",
+			strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
+	}
+	return stdout.String(), nil
 }
 
 func runTmux(args ...string) (string, error) {
@@ -698,10 +724,11 @@ func parsePanes(raw string) (cwds map[string]string, apps map[string][]string, b
 		name, path, cmd := f[0], f[1], f[2]
 		windowActive, paneActive := f[3] == "1", f[4] == "1"
 		bellFlag, title := f[5] == "1", f[8]
-		height, err := strconv.Atoi(f[7])
-		if err != nil {
-			continue // a pane with no height is a pane that cannot be captured
-		}
+		// A height that will not parse costs the batched capture, nothing else:
+		// zero fails the batch's arithmetic and sends it down the per-pane path.
+		// The row itself still carries this session's cwd, apps and agent, so
+		// dropping it over a missing height would lose far more than it saved.
+		height, _ := strconv.Atoi(f[7])
 		ref := agentPaneRef{ID: f[6], Height: height}
 
 		if _, ok := fallbackCWD[name]; !ok {
