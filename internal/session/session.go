@@ -3,6 +3,7 @@
 package session
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -93,34 +94,34 @@ const (
 // List builds the current session list from tmux and, best-effort, cp3,
 // excluding the session the caller is attached to.
 func List() ([]Session, error) {
-	current, err := currentSession()
+	current, sessOut, paneOut, err := tmuxSnapshot()
 	if err != nil {
 		return nil, err
 	}
-
-	sessOut, err := runTmux("list-sessions", "-F", sessionFormat)
-	if err != nil {
-		return nil, err
-	}
-
-	paneOut, err := runTmux("list-panes", "-a", "-F", paneFormat)
-	if err != nil {
-		return nil, err
-	}
-
-	sessions, agentPane := Build(sessOut, paneOut, fetchPeers(), current)
+	sessions, agentPane := Build(sessOut, paneOut, roster.get(), current)
 	classifyAgents(sessions, agentPane)
 	return sessions, nil
 }
 
-// ListFast is List without the slow parts: no cp3 roster, no pane captures.
-// It paints rows in the time tmux takes; List fills in the rest behind it.
-// Peer and agent state are absent until then, which is honest: unknown, not
-// zero.
+// ListFast is List without the parts that can lag: no cp3 roster, no pane
+// captures. It paints rows in the time tmux takes; List fills in the rest
+// behind it. Peer and agent state are absent until then, which is honest:
+// unknown, not zero.
 func ListFast() ([]Session, error) {
-	// One tmux invocation, not three. tmux chains commands with `;` and prints
-	// the results in order; process spawns and socket round trips are the cost,
-	// not parsing. display-message -p doubles as the marker printer.
+	current, sessOut, paneOut, err := tmuxSnapshot()
+	if err != nil {
+		return nil, err
+	}
+	sessions, _ := Build(sessOut, paneOut, peerFleet{}, current)
+	return sessions, nil
+}
+
+// tmuxSnapshot reads the attached client's session, every session and every
+// pane in ONE tmux invocation. tmux chains commands with `;` and prints their
+// results in order; the process spawn and socket round trip are the cost here,
+// not the parsing, so this is three spawns cheaper than asking separately.
+// display-message -p doubles as the marker printer.
+func tmuxSnapshot() (current, sessOut, paneOut string, err error) {
 	out, err := runTmux(
 		"display-message", "-p", "#{client_session}", ";",
 		"display-message", "-p", listMarkerSessions, ";",
@@ -129,20 +130,18 @@ func ListFast() ([]Session, error) {
 		"list-panes", "-a", "-F", paneFormat,
 	)
 	if err != nil {
-		return nil, err
+		return "", "", "", err
 	}
 
 	current, rest, ok := strings.Cut(out, "\n"+listMarkerSessions+"\n")
 	if !ok {
-		return nil, fmt.Errorf("tmux batch: session marker missing")
+		return "", "", "", fmt.Errorf("tmux batch: session marker missing")
 	}
-	sessOut, paneOut, ok := strings.Cut(rest, listMarkerPanes+"\n")
+	sessOut, paneOut, ok = strings.Cut(rest, listMarkerPanes+"\n")
 	if !ok {
-		return nil, fmt.Errorf("tmux batch: pane marker missing")
+		return "", "", "", fmt.Errorf("tmux batch: pane marker missing")
 	}
-
-	sessions, _ := Build(sessOut, paneOut, peerFleet{}, strings.TrimSpace(current))
-	return sessions, nil
+	return strings.TrimSpace(current), sessOut, paneOut, nil
 }
 
 // Markers separating the three outputs of the batched call. They contain no
@@ -154,6 +153,10 @@ const (
 
 // classifyAgents captures each agent's pane, concurrently, to tell Working
 // from Idle. Bounded by the number of agent sessions.
+//
+// One capture per process on purpose. Chaining them into a single tmux call
+// trades nine spawns for one, and loses: tmux runs a chained command serially,
+// which measured four times slower than paying for the spawns in parallel.
 func classifyAgents(sessions []Session, agentPane map[string]string) {
 	var wg sync.WaitGroup
 	for i := range sessions {
@@ -165,15 +168,13 @@ func classifyAgents(sessions []Session, agentPane map[string]string) {
 		if paneID == "" {
 			continue
 		}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			capture := capturePane(paneID, capturePaneLines)
 			s.State = Classify(true, false, capture)
 			if s.State == StateWorking {
 				s.WorkingVerb, s.WorkingElapsed = extractWorkingStatus(capture)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 }
@@ -189,16 +190,76 @@ type peerFleet struct {
 	Reachable bool
 }
 
+// roster serves the cp3 fleet to every list build.
+var roster peerCache
+
+// peerCacheTTL is how long a fetched roster is served before a refresh is
+// started behind it. Well under a human's notice of a peer going down, and far
+// above the list's own refresh, which is the point.
+const peerCacheTTL = 3 * time.Second
+
+// peerCache keeps the last roster so that refreshing the list never waits on
+// cp3 — a subprocess that costs more than every tmux read of a list build put
+// together. Only a cold cache blocks; once there is something to show, a stale
+// roster is served and replaced behind the caller.
+//
+// A failed fetch still counts as an attempt, so a missing or wedged cp3 is
+// paid for once per TTL rather than on every refresh. The zero value is an
+// empty cache that fetches on first use.
+type peerCache struct {
+	mu       sync.Mutex
+	fleet    peerFleet
+	attempt  time.Time
+	fetching bool
+}
+
+func (c *peerCache) get() peerFleet {
+	c.mu.Lock()
+	cold := c.attempt.IsZero()
+	refresh := !c.fetching && (cold || time.Since(c.attempt) > peerCacheTTL)
+	if refresh {
+		c.fetching = true
+	}
+	cached := c.fleet
+	c.mu.Unlock()
+
+	switch {
+	case !refresh:
+		return cached
+	case cold:
+		return c.store(fetchPeers()) // nothing to show yet, so wait for it once
+	default:
+		go c.store(fetchPeers())
+		return cached
+	}
+}
+
+func (c *peerCache) store(f peerFleet) peerFleet {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.fleet, c.attempt, c.fetching = f, time.Now(), false
+	return f
+}
+
 // fetchPeers is cp3's roster, best-effort: `cp3 peers --json`, then the older
 // plain table for a cp3 that predates --json. Any failure yields the zero
 // peerFleet; a cp3 error never reaches the user.
+// A deadline because cp3 talks to a broker over the network: without one, a
+// wedged broker holds the roster fetch — and the cold caller waiting on it —
+// open forever. Generous against a healthy cp3, which answers in tens of
+// milliseconds.
+const peerTimeout = 2 * time.Second
+
 func fetchPeers() peerFleet {
-	if out, err := exec.Command("cp3", "peers", "--json").Output(); err == nil {
+	ctx, cancel := context.WithTimeout(context.Background(), peerTimeout)
+	defer cancel()
+
+	if out, err := exec.CommandContext(ctx, "cp3", "peers", "--json").Output(); err == nil {
 		if rows, err := parsePeersJSON(string(out)); err == nil {
 			return peerFleet{Rows: rows, Reachable: true}
 		}
 	}
-	if out, err := exec.Command("cp3", "peers").Output(); err == nil {
+	if out, err := exec.CommandContext(ctx, "cp3", "peers").Output(); err == nil {
 		return peerFleet{Rows: parsePeersPlain(string(out)), Reachable: true}
 	}
 	return peerFleet{}
