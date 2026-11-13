@@ -1,6 +1,7 @@
 package session
 
 import (
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -13,7 +14,15 @@ func privateServer(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("no tmux")
 	}
-	t.Setenv("TMUX_TMPDIR", t.TempDir())
+	// Not t.TempDir(): tmux puts its socket under this, a socket path is
+	// capped near 100 bytes, and macOS's per-test temp path alone is longer.
+	// The server then never starts and every test here quietly skips.
+	dir, err := os.MkdirTemp("/tmp", "sessui")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	t.Setenv("TMUX_TMPDIR", dir)
 	t.Setenv("TMUX", "") // never inherit the ambient server
 
 	if out, err := exec.Command("tmux", "new-session", "-d", "-s", "probe", "-x", "80", "-y", "24", "cat").CombinedOutput(); err != nil {

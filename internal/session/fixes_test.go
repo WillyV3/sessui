@@ -50,7 +50,7 @@ func TestOddSessionNamesAreListed(t *testing.T) {
 	}
 	want := []string{"a|b", "café", "trailing|"}
 	for _, name := range want {
-		if out, err := exec.Command("tmux", "new-session", "-d", "-s", name, "-c", "/tmp", "cat").CombinedOutput(); err != nil {
+		if out, err := exec.Command("tmux", "new-session", "-d", "-s", name, "cat").CombinedOutput(); err != nil {
 			t.Fatalf("new-session %q: %v: %s", name, err, out)
 		}
 	}
@@ -63,8 +63,11 @@ func TestOddSessionNamesAreListed(t *testing.T) {
 	for _, s := range sessions {
 		got[s.Name] = s
 	}
+	// Windows is the field before the name: a record split in the wrong place
+	// would lose one or the other. Nothing about the pane is asserted, since
+	// its process may not have started yet.
 	for _, name := range want {
-		if s, ok := got[name]; !ok || s.CWD != "/tmp" || s.Windows != 1 {
+		if s, ok := got[name]; !ok || s.Windows != 1 {
 			t.Errorf("%q: listed=%v, record %+v", name, ok, s)
 		}
 	}
