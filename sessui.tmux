@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # sessui.tmux -- TPM entry point.
 #
-# Builds the Go binary on install/update (needs Go on PATH) and binds the
-# session-switcher popup. Configure in tmux.conf, before `run '~/.tmux/plugins/tpm/tpm'`:
+# Fetches the release binary for this checkout (no Go toolchain needed) and
+# binds the session-switcher popup. Configure in tmux.conf, before `run '~/.tmux/plugins/tpm/tpm'`:
 #
 #   set -g @sessui-key    's'     # prefix + <key> opens it   (default: s)
 #   set -g @sessui-width  '112'   # popup width               (default: 112 -- the table needs ~112)
@@ -11,6 +11,7 @@ set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BIN="$DIR/sessui"
+REPO="https://github.com/WillyV3/sessui"
 
 # tmux 3.7+: the popup only redraws live (spinners, counters, marquee) from
 # 3.7 (issue 4920, in the 3.6b→3.7 changelog). Say so once at install.
@@ -20,14 +21,47 @@ if ! printf '%s\n' "$tmux_version" | awk -F. '{ exit !($1 > 3 || ($1 == 3 && $2 
 	tmux display-message "sessui: needs tmux 3.7+ (this is $tmux_version) — the popup will not redraw live"
 fi
 
-# Build on first install and whenever a source file is newer than the binary
-# (covers `prefix + U` in-place updates; a fresh TPM clone has no binary at all).
-if command -v go >/dev/null 2>&1; then
-	if [ ! -x "$BIN" ] || [ -n "$(find "$DIR" -name '*.go' -newer "$BIN" -print -quit 2>/dev/null)" ]; then
-		(cd "$DIR" && go build -o "$BIN" .) || tmux display-message "sessui: go build failed"
-	fi
-elif [ ! -x "$BIN" ]; then
-	tmux display-message "sessui: install Go (https://go.dev), then 'prefix + U' to build"
+sha256() {
+	if command -v sha256sum >/dev/null 2>&1; then sha256sum "$@"; else shasum -a 256 "$@"; fi
+}
+
+# fetch <tag>: put that release's binary for this machine at $BIN. An archive
+# whose sha256 is not the one the release published is never unpacked.
+fetch() {
+	local arch name tmp ok=1
+	case "$(uname -m)" in
+	x86_64 | amd64) arch=amd64 ;;
+	aarch64 | arm64) arch=arm64 ;;
+	*) return 1 ;;
+	esac
+	name="sessui_$(uname -s | tr '[:upper:]' '[:lower:]')_$arch.tar.gz"
+	tmp="$(mktemp -d)"
+	# One && chain: errexit is off inside a tested subshell, so each step must
+	# gate the next by hand or a failed checksum would still reach tar.
+	(
+		cd "$tmp" &&
+			curl -fsSL -O "$REPO/releases/download/$1/$name" -O "$REPO/releases/download/$1/checksums.txt" &&
+			grep " $name\$" checksums.txt >sum &&
+			sha256 -c sum &&
+			tar -xzf "$name" sessui
+	) >/dev/null 2>&1 && mv "$tmp/sessui" "$BIN" && ok=0
+	rm -rf "$tmp"
+	return $ok
+}
+
+# The binary is the release this checkout is at, or the last one before it.
+# Fetch it when the one on disk is another version: a fresh install, or after
+# `prefix + U` pulled a newer tag. A failed update keeps the binary it had.
+want="$(git -C "$DIR" describe --tags --abbrev=0 2>/dev/null || true)"
+have="$("$BIN" -version 2>/dev/null || true)"
+if [ -n "$want" ] && [ "$have" != "$want" ]; then
+	fetch "$want" || true
+fi
+if [ ! -x "$BIN" ]; then
+	# Bind nothing: a key that opens a popup onto a missing binary is worse
+	# than a key that keeps doing what it did before.
+	tmux display-message "sessui: could not install ${want:-a release} for $(uname -sm) (needs curl, tar and network) — $REPO/releases"
+	exit 0
 fi
 
 opt() {

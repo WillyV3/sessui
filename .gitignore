@@ -1,2 +1,3 @@
 /sessui
 dist/
+*.test

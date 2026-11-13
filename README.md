@@ -13,6 +13,9 @@ and on your other machines — and gets out of the way.
 set -g @plugin 'WillyV3/sessui'
 ```
 
+TPM fetches the release binary for your machine (Linux or macOS, amd64 or
+arm64) and checks it against the release's checksums. No Go needed.
+
 **Go:**
 
 ```sh
@@ -92,7 +95,7 @@ Everything else is `~/.config/sessui/config.json`, written for you by `ctrl+e`:
 
 ## With cp3
 
-Running [claude-peers](https://github.com/WillyV3/claude-peers)? sessui matches
+Running [cp3](https://github.com/WillyV3/cp3)? sessui matches
 each session to its peer by directory and adds a `peer` column — up or down,
 what it's working on, `✉` when it owes you a reply. No config; it reads
 `cp3 peers` if `cp3` is there. Without it the column disappears.
