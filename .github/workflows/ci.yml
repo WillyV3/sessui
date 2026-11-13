@@ -43,8 +43,12 @@ jobs:
           if [ "$RUNNER_OS" = macOS ]; then brew install tmux; else sudo apt-get update -q && sudo apt-get install -y -q tmux; fi
           tmux -V
 
+      # A skipped test here means tmux did not start, and green would be a lie.
       - name: test
-        run: go test -race ./...
+        run: |
+          set -o pipefail
+          go test -race -v ./... | tee test.log
+          ! grep -- '--- SKIP' test.log
 
       - name: shellcheck the plugin entry point
         if: runner.os == 'Linux'
