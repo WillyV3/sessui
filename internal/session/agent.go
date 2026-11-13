@@ -47,7 +47,7 @@ func (s AgentState) String() string {
 var agentApps = map[string]bool{
 	"claude": true, "opencode": true, "codex": true, "copilot": true,
 	"crush": true, "gemini": true, "aider": true,
-	"cursor": true, "cline": true, "amp": true, "goose": true,
+	"cursor": true, "cline": true, "amp": true, "goose": true, "pi": true,
 }
 
 // IsAgentApp reports whether cmd is a recognized AI coding agent command.

@@ -114,9 +114,9 @@ func fetchHost(ctx context.Context, alias string) RemoteHost {
 	// running, which would report a healthy machine with no sessions as
 	// unreachable. Reachability is what ssh says about the connection.
 	remote := remotePrelude +
-		"tmux list-sessions -F '" + sessionFormat + "' 2>/dev/null; " +
+		"tmux -u list-sessions -F '" + sessionFormat + "' 2>/dev/null; " +
 		"echo " + remoteMarker + "; " +
-		"tmux list-panes -a -F '" + paneFormat + "' 2>/dev/null; exit 0"
+		"tmux -u list-panes -a -F '" + paneFormat + "' 2>/dev/null; exit 0"
 
 	out, err := exec.CommandContext(ctx, "ssh", append(sshArgs(alias), remote)...).Output()
 	if err != nil {
@@ -199,8 +199,8 @@ func ProxyName(host, name string) string { return host + ProxySep + name }
 // Idempotent: a second enter reuses the existing proxy.
 func AttachRemote(host, name string) error {
 	proxy := ProxyName(host, name)
-	if err := exec.Command("tmux", "has-session", "-t", proxy).Run(); err != nil {
-		remote := remotePrelude + "tmux attach -t " + quote(name)
+	if !hasSession(proxy) {
+		remote := remotePrelude + "tmux attach -t " + quote(exact(name))
 		cmd := "ssh " + strings.Join(sshArgs(host), " ") + " -t " + quote(remote)
 		if err := exec.Command("tmux", "new-session", "-d", "-s", proxy, cmd).Run(); err != nil {
 			return err
@@ -218,7 +218,7 @@ func quote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + 
 func NewRemote(host, name string) error {
 	// `new-session` fails when the name is taken, and "already there" is no
 	// reason to refuse to take the user to it.
-	remote := remotePrelude + "tmux has-session -t " + quote(name) + " 2>/dev/null || tmux new-session -d -s " + quote(name)
+	remote := remotePrelude + "tmux has-session -t " + quote(exact(name)) + " 2>/dev/null || tmux new-session -d -s " + quote(name)
 	if err := exec.Command("ssh", append(sshArgs(host), remote)...).Run(); err != nil {
 		return err
 	}
@@ -243,12 +243,12 @@ func runOn(host string, args ...string) error {
 // local proxy needs no cleanup: its ssh exits, the pane closes, and tmux
 // drops the session with its last window.
 func KillOn(host, name string) error {
-	return runOn(host, "kill-session", "-t", name)
+	return runOn(host, "kill-session", "-t", exact(name))
 }
 
 // RenameOn renames a session on host ("" = local).
 func RenameOn(host, oldName, newName string) error {
-	return runOn(host, "rename-session", "-t", oldName, newName)
+	return runOn(host, "rename-session", "-t", exact(oldName), newName)
 }
 
 // Forget drops one session from a host's cached list. The next poll is up to

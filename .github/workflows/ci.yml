@@ -36,6 +36,20 @@ jobs:
       - name: vet
         run: go vet ./...
 
+      # The tests that matter drive a real tmux server of their own and skip
+      # without one, so a runner with no tmux would pass having checked nothing.
+      - name: install tmux
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then brew install tmux; else sudo apt-get update -q && sudo apt-get install -y -q tmux; fi
+          tmux -V
+
+      - name: test
+        run: go test -race ./...
+
+      - name: shellcheck the plugin entry point
+        if: runner.os == 'Linux'
+        run: shellcheck -S warning sessui.tmux
+
 
   # Proof the release matrix compiles, on every push rather than only at tag
   # time -- a tag that fails to build is a bad afternoon.

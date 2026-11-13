@@ -72,10 +72,16 @@ opt() {
 key="$(opt @sessui-key s)"
 height="$(opt @sessui-height 26)"
 
-# Width is read at OPEN time, not bind time, so a change made from sessui's
-# own settings (which writes @sessui-width) takes effect on the very next
-# prefix+key without re-sourcing tmux.conf. display-popup -w rejects a
-# format string, hence the run-shell substitution rather than '#{@sessui-width}'.
-# Height stays bound once: the table is one row per session and there is no
-# setting for it, by design.
-tmux bind-key "$key" run-shell "tmux display-popup -E -w \"\$(tmux show-option -gqv @sessui-width)\" -h $height '$BIN' 2>/dev/null || tmux display-popup -E -w 112 -h $height '$BIN'"
+# smaller <a> <b>: a tmux format for the lesser of two numbers.
+smaller() { printf '#{?#{e|<:%s,%s},%s,%s}' "$1" "$2" "$1" "$2"; }
+
+# The popup is the size asked for, or the client's when that is smaller: tmux
+# refuses a popup larger than the terminal, and an error is not a switcher.
+#
+# run-shell expands formats when the key is pressed, against the client that
+# pressed it, which display-popup -w will not do for itself. So the width is
+# read at OPEN time: a change made from sessui's own settings (which writes
+# @sessui-width) applies on the very next prefix+key without re-sourcing
+# tmux.conf. Height is bound once: there is no setting for it, by design.
+width="$(smaller '#{client_width}' '#{?@sessui-width,#{@sessui-width},112}')"
+tmux bind-key "$key" run-shell "tmux display-popup -E -w '$width' -h '$(smaller '#{client_height}' "$height")' '$BIN'"

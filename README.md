@@ -30,6 +30,10 @@ PATH, and bind it yourself:
 bind-key s display-popup -E -w 112 -h 26 sessui
 ```
 
+A popup larger than the terminal is an error in tmux. The TPM install shrinks
+it to fit; with your own binding, use sizes like `-w 90% -h 80%` if you work
+in small windows.
+
 Needs **tmux 3.7+**. Earlier versions open the popup but never redraw it.
 
 ## Keys

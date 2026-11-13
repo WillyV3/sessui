@@ -7,17 +7,17 @@ import "testing"
 // session whose agent pane is not in the active window, a bell, a repeated
 // command, and a title holding the separator.
 const panesFixture = "" +
-	"work|/home/u/work|nvim|1|1|0|%1|51|editing\n" +
-	"work|/home/u/work|claude|1|0|0|%2|40|work · claude\n" +
-	"work|/home/u/other|bash|0|1|0|%3|51|shell\n" +
-	"rang|/home/u/rang|claude|1|1|1|%4|30|needs you\n" +
-	"deep|/home/u/deep|bash|1|1|0|%5|20|shell\n" +
-	"deep|/home/u/deep|claude|0|1|0|%6|25|deep · claude\n" +
-	"dupe|/home/u/dupe|nvim|1|1|0|%7|10|a|b|c\n" +
-	"dupe|/home/u/dupe|nvim|0|1|0|%8|10|second nvim\n"
+	"$work|1|1|0|%1|51|nvim|/home/u/work|editing\n" +
+	"$work|1|0|0|%2|40|claude|/home/u/work|work · claude\n" +
+	"$work|0|1|0|%3|51|bash|/home/u/other|shell\n" +
+	"$rang|1|1|1|%4|30|claude|/home/u/rang|needs you\n" +
+	"$deep|1|1|0|%5|20|bash|/home/u/deep|shell\n" +
+	"$deep|0|1|0|%6|25|claude|/home/u/deep|deep · claude\n" +
+	"$dupe|1|1|0|%7|10|nvim|/home/u/dupe|a|b|c\n" +
+	"$dupe|0|1|0|%8|10|nvim|/home/u/dupe|second nvim\n"
 
 func TestParsePanesPicksAgentPane(t *testing.T) {
-	cwds, apps, bell, agentPane, titles := parsePanes(panesFixture)
+	cwds, apps, bell, agentPane, titles := parsePanes(panesFixture, map[string]string{"$work": "work", "$rang": "rang", "$deep": "deep", "$dupe": "dupe"})
 
 	// The active window's path wins over a later pane's.
 	if got := cwds["work"]; got != "/home/u/work" {
@@ -51,11 +51,11 @@ func TestParsePanesPicksAgentPane(t *testing.T) {
 }
 
 func TestBuildExcludesCurrentAndSortsByLastAttached(t *testing.T) {
-	// name|created|activity|attached|windows|last_attached
+	// id|created|activity|attached|windows|last_attached|name
 	sessions := "" +
-		"work|1700000000|1700000900|1|2|1700000900\n" +
-		"rang|1700000000|1700000800|0|1|1700000500\n" +
-		"here|1700000000|1700000700|1|1|1700000999\n"
+		"$work|1700000000|1700000900|1|2|1700000900|work\n" +
+		"$rang|1700000000|1700000800|0|1|1700000500|rang\n" +
+		"$here|1700000000|1700000700|1|1|1700000999|here\n"
 
 	built, agentPane := Build(sessions, panesFixture, peerFleet{}, "here")
 

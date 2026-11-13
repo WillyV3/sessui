@@ -82,11 +82,19 @@ var shellCommands = map[string]bool{
 }
 
 const (
-	sessionFormat = "#{session_name}|#{session_created}|#{session_activity}|#{session_attached}|#{session_windows}|#{session_last_attached}"
-	// pane_title is last because it is the only field that can contain "|";
-	// parsePanes splits with a bounded SplitN for that reason. pane_height is
-	// carried so agent panes can be captured in one batch: see capturePanes.
-	paneFormat = "#{session_name}|#{pane_current_path}|#{pane_current_command}|#{window_active}|#{pane_active}|#{window_bell_flag}|#{pane_id}|#{pane_height}|#{pane_title}"
+	// Records are "|"-separated with the one free-text field LAST, read with
+	// a bounded SplitN, so nothing a user typed can split a record: a session
+	// called "a|b" used to vanish from the list. Panes name their session by
+	// tmux's own id for the same reason. A control-character separator would
+	// be simpler and does not survive: tmux 3.4 prints one as "\037" and 3.8,
+	// without a UTF-8 locale, as "_".
+	sessionFormat = "#{session_id}|#{session_created}|#{session_activity}|#{session_attached}|#{session_windows}|#{session_last_attached}|#{session_name}"
+	// pane_height is carried so agent panes can be captured in one batch: see
+	// capturePanes.
+	// ponytail: a working directory containing "|" spills into the title of
+	// that one pane. A second record type per pane would fix it; nothing has
+	// asked for it.
+	paneFormat = "#{session_id}|#{window_active}|#{pane_active}|#{window_bell_flag}|#{pane_id}|#{pane_height}|#{pane_current_command}|#{pane_current_path}|#{pane_title}"
 
 	// capturePaneLines is how much of an agent pane's tail is read to tell
 	// Working from Idle.
@@ -287,6 +295,10 @@ func classifyAgents(sessions []Session, agentPane map[string]agentPaneRef, have 
 type peerFleet struct {
 	Rows      []peerRow
 	Reachable bool
+	// Machine is this machine as cp3 names it. A session only joins a peer
+	// that runs here: the same path exists on every box that syncs a home
+	// directory. "" (not known) joins by path alone.
+	Machine string
 }
 
 // roster serves the cp3 fleet to every list build.
@@ -353,13 +365,17 @@ func fetchPeers() peerFleet {
 	ctx, cancel := context.WithTimeout(context.Background(), peerTimeout)
 	defer cancel()
 
+	// cp3 names a machine by its hostname, and so does this.
+	// ponytail: a peer that registered under a hostname the box has since
+	// changed (a Mac renamed by DHCP) loses its column until it restarts.
+	machine, _ := os.Hostname()
 	if out, err := exec.CommandContext(ctx, "cp3", "peers", "--json").Output(); err == nil {
 		if rows, err := parsePeersJSON(string(out)); err == nil {
-			return peerFleet{Rows: rows, Reachable: true}
+			return peerFleet{Rows: rows, Reachable: true, Machine: machine}
 		}
 	}
 	if out, err := exec.CommandContext(ctx, "cp3", "peers").Output(); err == nil {
-		return peerFleet{Rows: parsePeersPlain(string(out)), Reachable: true}
+		return peerFleet{Rows: parsePeersPlain(string(out)), Reachable: true, Machine: machine}
 	}
 	return peerFleet{}
 }
@@ -370,7 +386,7 @@ func fetchPeers() peerFleet {
 // status alone does not say which link failed.
 func runTmuxPartial(args ...string) (string, error) {
 	var stdout, stderr strings.Builder
-	cmd := exec.Command("tmux", args...)
+	cmd := tmuxRead(args...)
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
 		return stdout.String(), fmt.Errorf("tmux %s: %w: %s",
@@ -379,31 +395,35 @@ func runTmuxPartial(args ...string) (string, error) {
 	return stdout.String(), nil
 }
 
+// tmuxRead is a tmux command whose output is parsed. -u makes tmux print
+// names as they are: without a UTF-8 locale -- a non-interactive ssh has
+// none -- "café" comes back as "caf_", a session that then cannot be found.
+func tmuxRead(args ...string) *exec.Cmd {
+	return exec.Command("tmux", append([]string{"-u"}, args...)...)
+}
+
 func runTmux(args ...string) (string, error) {
-	out, err := exec.Command("tmux", args...).Output()
+	out, err := tmuxRead(args...).Output()
 	if err != nil {
 		return "", fmt.Errorf("tmux %s: %w", strings.Join(args, " "), err)
 	}
 	return string(out), nil
 }
 
-// currentSession is the session the popup was opened from, which the
-// switcher must not offer.
-//
-// It asks for #{client_session}, not #S. Inside a popup #S resolves against a
-// target that is not the attached client and answers with an unrelated
-// session, which both lists the session you are in and hides an innocent one.
-func currentSession() (string, error) {
-	out, err := runTmux("display-message", "-p", "#{client_session}")
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(out), nil
+// exact is a tmux target that names one session and nothing else. A bare name
+// is also tried as a pattern and then as a prefix, so with "work" gone,
+// `kill-session -t work` kills "work-prod". The list is up to one reload
+// stale, so that is a row away from happening; "=" turns the guessing off.
+func exact(name string) string { return "=" + name }
+
+// hasSession reports whether a session with exactly this name exists.
+func hasSession(name string) bool {
+	return exec.Command("tmux", "has-session", "-t", exact(name)).Run() == nil
 }
 
 // Switch makes tmux switch the client to the named session.
 func Switch(name string) error {
-	return exec.Command("tmux", "switch-client", "-t", name).Run()
+	return exec.Command("tmux", "switch-client", "-t", exact(name)).Run()
 }
 
 // New creates a detached session named name and switches the client to it.
@@ -416,12 +436,12 @@ func New(name string) error {
 
 // Rename renames a tmux session.
 func Rename(oldName, newName string) error {
-	return exec.Command("tmux", "rename-session", "-t", oldName, newName).Run()
+	return exec.Command("tmux", "rename-session", "-t", exact(oldName), newName).Run()
 }
 
 // Kill kills a tmux session.
 func Kill(name string) error {
-	return exec.Command("tmux", "kill-session", "-t", name).Run()
+	return exec.Command("tmux", "kill-session", "-t", exact(name)).Run()
 }
 
 // popupWidthOption is the tmux user option sessui.tmux reads to size the
@@ -452,8 +472,12 @@ func SetPopupWidth(w int) error {
 // pane id, which List uses to target its captures.
 func Build(sessOut, paneOut string, fleet peerFleet, current string) ([]Session, map[string]agentPaneRef) {
 	metas := parseSessions(sessOut)
-	cwds, apps, bell, agentPane, titles := parsePanes(paneOut)
-	peersByCWD, peersByName := indexPeers(fleet.Rows)
+	names := make(map[string]string, len(metas))
+	for _, m := range metas {
+		names[m.id] = m.name
+	}
+	cwds, apps, bell, agentPane, titles := parsePanes(paneOut, names)
+	peersByCWD, peersByName := indexPeers(fleet)
 
 	sessions := make([]Session, 0, len(metas))
 	for _, m := range metas {
@@ -519,11 +543,12 @@ type peerRow struct {
 // indexPeers builds Build's two lookups: cwd -> the first up peer at that
 // cwd, so two peers sharing one (a name and its contested-name fallback)
 // resolve to one; and name -> the full row.
-func indexPeers(peers []peerRow) (byCWD map[string]string, byName map[string]peerRow) {
+func indexPeers(fleet peerFleet) (byCWD map[string]string, byName map[string]peerRow) {
 	byCWD = map[string]string{}
 	byName = map[string]peerRow{}
-	for _, r := range peers {
-		if r.Up && r.Cwd != "" {
+	for _, r := range fleet.Rows {
+		here := fleet.Machine == "" || r.Machine == "" || strings.EqualFold(r.Machine, fleet.Machine)
+		if r.Up && r.Cwd != "" && here {
 			if _, ok := byCWD[r.Cwd]; !ok {
 				byCWD[r.Cwd] = r.Name
 			}
@@ -568,27 +593,10 @@ func parsePeersPlain(raw string) []peerRow {
 	return rows
 }
 
-// parsePeers reduces the plain table to a name -> machine map.
-func parsePeers(raw string) map[string]string {
-	peers := map[string]string{}
-	for _, r := range parsePeersPlain(raw) {
-		peers[r.Name] = r.Machine
-	}
-	return peers
-}
-
-// spawnPeerMarker is the file a peer launcher drops in a workspace it
-// creates, identifying it as an agent workspace after the agent exits.
-const spawnPeerMarker = ".claude-peers-agent"
-
-// hasSpawnPeerMarker reports whether cwd is a peer workspace.
-func hasSpawnPeerMarker(cwd string) bool {
-	if cwd == "" {
-		return false
-	}
-	_, err := os.Stat(filepath.Join(cwd, spawnPeerMarker))
-	return err == nil
-}
+// peerMarkers are the files a peer launcher drops in a workspace it creates,
+// naming its peer after the agent exits: cp3's current name first, then the
+// one from before its rename.
+var peerMarkers = []string{".cp3-peer-name", ".claude-peers-agent"}
 
 // peerMarkerName is the first line of a workspace's marker file -- the peer
 // it was created for -- or "" when there is none.
@@ -596,12 +604,13 @@ func peerMarkerName(cwd string) string {
 	if cwd == "" {
 		return ""
 	}
-	data, err := os.ReadFile(filepath.Join(cwd, spawnPeerMarker))
-	if err != nil {
-		return ""
+	for _, marker := range peerMarkers {
+		if data, err := os.ReadFile(filepath.Join(cwd, marker)); err == nil {
+			line, _, _ := strings.Cut(string(data), "\n")
+			return strings.TrimSpace(line)
+		}
 	}
-	line, _, _ := strings.Cut(string(data), "\n")
-	return strings.TrimSpace(line)
+	return ""
 }
 
 // agentTitleMarker is the prefix an agent sets on its pane title to carry a
@@ -651,6 +660,7 @@ func hasAgentApp(apps []string) bool {
 }
 
 type sessionMeta struct {
+	id           string // tmux's session id ("$3"): how a pane record names its session
 	name         string
 	created      time.Time
 	activity     time.Time
@@ -666,8 +676,8 @@ func parseSessions(raw string) []sessionMeta {
 		if line == "" {
 			continue
 		}
-		f := strings.Split(line, "|")
-		if len(f) != 6 {
+		f := strings.SplitN(line, "|", 7)
+		if len(f) != 7 {
 			continue
 		}
 		created, err1 := strconv.ParseInt(f[1], 10, 64)
@@ -684,7 +694,8 @@ func parseSessions(raw string) []sessionMeta {
 			lastAttached = time.Unix(ts, 0)
 		}
 		metas = append(metas, sessionMeta{
-			name:         f[0],
+			id:           f[0],
+			name:         f[6],
 			created:      time.Unix(created, 0),
 			activity:     time.Unix(activity, 0),
 			attached:     f[3] == "1",
@@ -700,7 +711,7 @@ func parseSessions(raw string) []sessionMeta {
 // commands in first-seen order, whether any window's bell is set, and the
 // agent pane's id and title -- the focused pane if it runs the agent, else
 // the first agent pane seen.
-func parsePanes(raw string) (cwds map[string]string, apps map[string][]string, bell map[string]bool, agentPane map[string]agentPaneRef, titles map[string]string) {
+func parsePanes(raw string, names map[string]string) (cwds map[string]string, apps map[string][]string, bell map[string]bool, agentPane map[string]agentPaneRef, titles map[string]string) {
 	cwds = map[string]string{}
 	apps = map[string][]string{}
 	bell = map[string]bool{}
@@ -721,15 +732,18 @@ func parsePanes(raw string) (cwds map[string]string, apps map[string][]string, b
 		if len(f) != 9 {
 			continue
 		}
-		name, path, cmd := f[0], f[1], f[2]
-		windowActive, paneActive := f[3] == "1", f[4] == "1"
-		bellFlag, title := f[5] == "1", f[8]
+		name, ok := names[f[0]]
+		if !ok {
+			continue // a session created between the two listings; the next reload has it
+		}
+		windowActive, paneActive, bellFlag := f[1] == "1", f[2] == "1", f[3] == "1"
+		cmd, path, title := f[6], f[7], f[8]
 		// A height that will not parse costs the batched capture, nothing else:
 		// zero fails the batch's arithmetic and sends it down the per-pane path.
 		// The row itself still carries this session's cwd, apps and agent, so
 		// dropping it over a missing height would lose far more than it saved.
-		height, _ := strconv.Atoi(f[7])
-		ref := agentPaneRef{ID: f[6], Height: height}
+		height, _ := strconv.Atoi(f[5])
+		ref := agentPaneRef{ID: f[4], Height: height}
 
 		if _, ok := fallbackCWD[name]; !ok {
 			fallbackCWD[name] = path

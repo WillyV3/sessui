@@ -13,11 +13,11 @@ func benchFixture() (sessOut, paneOut string) {
 	var sess, panes strings.Builder
 	for i := range 20 {
 		name := "session-" + strconv.Itoa(i)
-		fmt.Fprintf(&sess, "%s|1700000000|1700000900|0|2|17000009%02d\n", name, i)
-		fmt.Fprintf(&panes, "%s|/home/u/p/%s|nvim|1|1|0|%%%d|51|editing %s\n", name, name, i*3, name)
-		fmt.Fprintf(&panes, "%s|/home/u/p/%s|claude|1|0|0|%%%d|51|%s · claude\n", name, name, i*3+1, name)
+		fmt.Fprintf(&sess, "$%d|1700000000|1700000900|0|2|17000009%02d|%s\n", i, i, name)
+		fmt.Fprintf(&panes, "$%d|1|1|0|%%%d|51|nvim|/home/u/p/%s|editing %s\n", i, i*3, name, name)
+		fmt.Fprintf(&panes, "$%d|1|0|0|%%%d|51|claude|/home/u/p/%s|%s · claude\n", i, i*3+1, name, name)
 		if i%2 == 0 {
-			fmt.Fprintf(&panes, "%s|/home/u/p/%s|bash|0|1|0|%%%d|51|shell\n", name, name, i*3+2)
+			fmt.Fprintf(&panes, "$%d|0|1|0|%%%d|51|bash|/home/u/p/%s|shell\n", i, i*3+2, name)
 		}
 	}
 	return sess.String(), panes.String()
