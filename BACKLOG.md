@@ -5,29 +5,11 @@ if there is no moment where it hurt, it does not belong here.
 
 ## Bugs seen
 
-**No tmux server is a hard error.** On a machine with tmux installed but nothing
-running, `sessui` exits instead of showing an empty list:
-
-```
-$ sessui -dump
-sessui: dump: tmux display-message -p #{client_session}: exit status 1
-```
-
-Harmless in the normal path — sessui launches as a tmux popup, so a server
-always exists — but "no sessions" and "no server" are different from "broken",
-and only the last deserves an error.
-
 **A cold remote create can leave you behind.** Once, with every ssh connection
 cold, `enter` on a new remote session created it on the host and made the local
 proxy, but the switch did not land — the client stayed put. Warm, it is
 reliable; it has not reproduced deliberately. Wants a harness that forces the
 cold path repeatedly rather than another guess.
-
-**An unreachable host will not say why.** The chip shows `○` and stops there.
-`RemoteHost.Err` is captured and then thrown away by the UI. A captive-portal
-network with DNS but no route took manual ssh to diagnose — the error had that
-in it the whole time. Surfacing it (on the focused chip, or in the footer)
-turns a dead dot into a diagnosis.
 
 ## Debt taken on purpose
 
@@ -61,6 +43,3 @@ authenticated socket alive for a minute. Mode 0600, owned by you, namespaced
 makes. On a box where root is not you, it is a real widening that sessui makes
 on the user's behalf. Documented in SECURITY.md; a config key to turn it off
 would be better than a paragraph.
-
-**`-hosts` is undocumented.** It exists, it is how the remote half was built and
-verified, and the README does not mention it.

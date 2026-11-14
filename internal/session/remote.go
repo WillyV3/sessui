@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os/exec"
 	"strings"
 	"sync"
@@ -120,7 +121,7 @@ func fetchHost(ctx context.Context, alias string) RemoteHost {
 
 	out, err := exec.CommandContext(ctx, "ssh", append(sshArgs(alias), remote)...).Output()
 	if err != nil {
-		return RemoteHost{Alias: alias, Err: err}
+		return RemoteHost{Alias: alias, Err: hostErr(ctx, err)}
 	}
 
 	if strings.Contains(string(out), noTmuxMarker) {
@@ -135,6 +136,23 @@ func fetchHost(ctx context.Context, alias string) RemoteHost {
 		sessions[i].Host = alias
 	}
 	return RemoteHost{Alias: alias, Sessions: sessions, Seen: time.Now()}
+}
+
+// hostErr says why a host did not answer, in ssh's own last words. The exit
+// status is 255 for a mistyped name, a sleeping laptop and a captive portal
+// alike; the line ssh printed is what tells them apart.
+func hostErr(ctx context.Context, err error) error {
+	if ctx.Err() != nil {
+		return fmt.Errorf("no answer in %v", hostTimeout)
+	}
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		lines := strings.Split(strings.TrimSpace(string(exit.Stderr)), "\n")
+		if last := strings.TrimPrefix(strings.TrimSpace(lines[len(lines)-1]), "ssh: "); last != "" {
+			return errors.New(last)
+		}
+	}
+	return err
 }
 
 // sshArgs is the transport decision in one place: shell out to ssh rather

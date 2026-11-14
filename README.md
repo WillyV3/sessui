@@ -61,7 +61,12 @@ hosts   ● build-box   ● laptop 1   ○ desk-pi   ○ old-mac   ›
 ```
 
 `●` up · `○` down · `◌` still asking. Reachable machines sort first. Nothing is
-polled until you pick something.
+polled until you pick something. Put the cursor on a `○` and the row says what
+ssh said — a mistyped name, a sleeping laptop and a captive portal are
+different problems.
+
+Outside tmux, `sessui -hosts` prints the same thing as text: every host, its
+sessions, or why it did not answer.
 
 `enter` on a remote session attaches over ssh inside a local session named
 `host/name`. After that it's a normal local session — instant to switch back to,

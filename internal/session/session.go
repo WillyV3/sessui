@@ -171,6 +171,9 @@ func readTmux(speculate []agentPaneRef) (tmuxReading, error) {
 	// useless. The build would not get far enough to forget the dead pane, so
 	// every refresh after it would fail the same way, forever.
 	out, runErr := runTmuxPartial(args...)
+	if out == "" && noServer(runErr) {
+		return tmuxReading{}, nil // nothing running is an empty list, not a fault
+	}
 
 	current, rest, ok := strings.Cut(out, "\n"+listMarkerSessions+"\n")
 	if !ok {
@@ -195,6 +198,19 @@ func readTmux(speculate []agentPaneRef) (tmuxReading, error) {
 		}
 	}
 	return reading, nil
+}
+
+// noServer reports tmux saying there is nothing to connect to, in the two
+// ways its client says it: "no server running on <socket>" for a socket
+// nobody is listening on, "error connecting to <socket> (No such file or
+// directory)" when there never was one. Anything else stays an error.
+func noServer(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "no server running") ||
+		(strings.Contains(msg, "error connecting to") && strings.Contains(msg, "No such file or directory"))
 }
 
 // lastPanes is the pane set the previous build read: the basis for readTmux's

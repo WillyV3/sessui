@@ -1,10 +1,14 @@
 package session
 
 import (
+	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 // tmux tries a bare target as a pattern and then a prefix. With "work" gone,
@@ -125,5 +129,85 @@ func TestPeerMarkerName(t *testing.T) {
 func TestPiIsAnAgent(t *testing.T) {
 	if !IsAgentApp("pi") || IsAgentApp("pip") {
 		t.Error("pi must count as an agent, and only pi")
+	}
+}
+
+// tmux installed with nothing running is an empty list, not a failure.
+func TestNoServerIsAnEmptyList(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("no tmux")
+	}
+	dir, err := os.MkdirTemp("/tmp", "sessui")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	t.Setenv("TMUX_TMPDIR", dir)
+	t.Setenv("TMUX", "")
+
+	for name, list := range map[string]func() ([]Session, error){"List": List, "ListFast": ListFast} {
+		if sessions, err := list(); err != nil || len(sessions) != 0 {
+			t.Errorf("%s with no server: %d sessions, err %v", name, len(sessions), err)
+		}
+	}
+}
+
+// ssh exits 255 whatever went wrong; the error must carry what it printed.
+func TestHostErrSaysWhy(t *testing.T) {
+	_, err := exec.Command("sh", "-c",
+		`echo "Warning: noise" >&2; echo "ssh: connect to host 10.0.0.9 port 22: No route to host" >&2; exit 255`).Output()
+	if got := hostErr(context.Background(), err).Error(); got != "connect to host 10.0.0.9 port 22: No route to host" {
+		t.Errorf("hostErr = %q", got)
+	}
+
+	// Nothing printed: the exit status is all there is.
+	_, err = exec.Command("sh", "-c", "exit 255").Output()
+	if got := hostErr(context.Background(), err).Error(); got != "exit status 255" {
+		t.Errorf("silent failure: hostErr = %q", got)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if got := hostErr(ctx, errors.New("signal: killed")).Error(); !strings.Contains(got, "no answer in") {
+		t.Errorf("timed out: hostErr = %q", got)
+	}
+}
+
+func TestAbbreviatePath(t *testing.T) {
+	for _, tc := range []struct{ path, home, want string }{
+		{"/home/u/projects/work/app", "/home/u", "~/p/w/app"},
+		{"/home/u", "/home/u", "~"},
+		{"/home/user2/x", "/home/u", "/h/u/x"}, // a home that is only a prefix of the name is not home
+		{"/var/log/nginx", "/home/u", "/v/l/nginx"},
+		{"/home/u/été/notes", "/home/u", "~/é/notes"}, // first rune, not first byte
+		{"/", "/home/u", "/"},
+		{"", "/home/u", ""},
+		{"/srv/app", "", "/s/app"},
+	} {
+		if got := AbbreviatePath(tc.path, tc.home); got != tc.want {
+			t.Errorf("AbbreviatePath(%q, %q) = %q, want %q", tc.path, tc.home, got, tc.want)
+		}
+	}
+}
+
+func TestHumanizeDuration(t *testing.T) {
+	for _, tc := range []struct {
+		d    time.Duration
+		want string
+	}{
+		{0, "now"},
+		{-time.Minute, "now"}, // a clock that disagrees is not "-60s ago"
+		{8 * time.Second, "8s"},
+		{59 * time.Second, "59s"},
+		{time.Minute, "1m"},
+		{2 * time.Hour, "2h"},
+		{24 * time.Hour, "1d"},
+		{6 * 24 * time.Hour, "6d"},
+		{7 * 24 * time.Hour, "1w"},
+		{30 * 24 * time.Hour, "4w"},
+	} {
+		if got := humanizeDuration(tc.d); got != tc.want {
+			t.Errorf("humanizeDuration(%v) = %q, want %q", tc.d, got, tc.want)
+		}
 	}
 }

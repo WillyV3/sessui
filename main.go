@@ -78,7 +78,7 @@ func runHosts(args []string) int {
 	var reachable, total int
 	for _, h := range w.Snapshot(aliases) {
 		if h.Err != nil {
-			fmt.Printf("%-22s unreachable\n", h.Alias)
+			fmt.Printf("%-22s unreachable: %v\n", h.Alias, h.Err)
 			continue
 		}
 		reachable++

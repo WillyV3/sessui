@@ -160,6 +160,11 @@ type columnEditor struct {
 	// widths is the per-column resize override, 0 = catalog default: the
 	// columnSetting.Width contract, so Result() is a direct read.
 	widths map[columnID]int
+	// parkedPeer is the peer column's setting while no peer is up. It is not
+	// shown or offered then, but it is not deleted either: Result puts it
+	// back at parkedAt, so the column returns when a peer does.
+	parkedPeer *columnSetting
+	parkedAt   int
 
 	// width is the row width of the window the editor is in; every line
 	// renders at it. popupWidth is the tmux width being set for the NEXT open
@@ -243,7 +248,11 @@ func (e *columnEditor) reset(settings []columnSetting) {
 		_, known := columnCatalog[id]
 		return known && !seen[id] && (id != colPeer || e.showPeer)
 	}
-	for _, s := range settings {
+	e.parkedPeer = nil
+	for i, s := range settings {
+		if s.ID == colPeer && !e.showPeer {
+			e.parkedPeer, e.parkedAt = &s, i
+		}
 		if !eligible(s.ID) {
 			continue
 		}
@@ -297,6 +306,9 @@ func (e *columnEditor) Result() []columnSetting {
 			continue
 		}
 		out = append(out, columnSetting{ID: id, Width: e.widths[id]})
+	}
+	if e.parkedPeer != nil {
+		out = slices.Insert(out, min(e.parkedAt, len(out)), *e.parkedPeer)
 	}
 	return out
 }

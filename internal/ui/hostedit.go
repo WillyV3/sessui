@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -134,11 +135,26 @@ func (e *columnEditor) renderHostsRow(width int) string {
 	}
 
 	hint := fmt.Sprintf("%d watched", len(e.hostResult()))
+	// A dead dot on the focused chip says why. Capped, because the hint's
+	// width comes out of the chips' budget below.
+	if selected && e.hostCursor < len(order) {
+		if err := e.hostState[order[e.hostCursor]].Err; err != nil {
+			hint = err.Error()
+			// The reason is at the end ("...: No route to host"), so that
+			// is the end that is kept.
+			if over := ansi.StringWidth(hint) - hostErrWidth; over > 0 {
+				hint = ansi.TruncateLeft(hint, over+1, "…")
+			}
+		}
+	}
 	// controlRow spends cursorWidth + captionWidth on the left and anchors the
 	// hint right; what is left is the viewport.
 	budget := width - cursorWidth - captionWidth - lipgloss.Width(hint) - 1
 	return e.controlRow("hosts", e.windowChips(chips, budget), hint, width)
 }
+
+// hostErrWidth is the most of a host's error the hosts row will show.
+const hostErrWidth = 48
 
 // chipGap separates chips. Declared once because the viewport must measure
 // with the same value the join uses.
