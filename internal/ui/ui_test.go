@@ -10,9 +10,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/termenv"
 
 	"github.com/WillyV3/sessui/internal/session"
 )
@@ -432,5 +434,40 @@ func TestApplyingSettingsWithNoPeerUpKeepsThePeerColumn(t *testing.T) {
 
 	if !reflect.DeepEqual(m.columns, defaultColumnSettings()) {
 		t.Errorf("columns after an untouched apply: %v", m.columns)
+	}
+}
+
+// A session that needs you says what for, and blinks without moving or going
+// blank: a popup that cannot redraw freezes on one phase, and either one must
+// still read.
+func TestNeedsYouSaysWhatForAndBlinksInPlace(t *testing.T) {
+	was := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.ANSI256) // a test has no terminal, and no styling to compare without one
+	t.Cleanup(func() { lipgloss.SetColorProfile(was) })
+
+	styles := New().styles
+	sp := spinner.New()
+	s := session.Session{Name: "api", Agent: true, Apps: []string{"claude"}, State: session.StateNotify, Notice: "approve Bash: make install"}
+	on, off := time.UnixMilli(0), time.UnixMilli(500)
+
+	for name, render := range map[string]func(time.Time) string{
+		"status": func(now time.Time) string { return renderStatus(styles, now, s) },
+		"icon":   func(now time.Time) string { return renderIcons(s, sp, now) },
+	} {
+		a, b := render(on), render(off)
+		if a == b {
+			t.Errorf("%s: both phases are drawn the same, so nothing blinks", name)
+		}
+		if ansi.Strip(a) != ansi.Strip(b) || strings.TrimSpace(ansi.Strip(a)) == "" {
+			t.Errorf("%s: phases must differ in style only: %q and %q", name, ansi.Strip(a), ansi.Strip(b))
+		}
+	}
+
+	if got := ansi.Strip(renderStatus(styles, on, s)); got != "needs you · approve Bash: make install" {
+		t.Errorf("status with a notice: %q", got)
+	}
+	s.Notice = "" // it only rang the bell
+	if got := ansi.Strip(renderStatus(styles, on, s)); got != "needs you" {
+		t.Errorf("status without a notice: %q", got)
 	}
 }

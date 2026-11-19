@@ -31,6 +31,15 @@ rest behind it.
   because truncated tool output and status bars also end words with `…`.
 - **Idle** — agent present, none of the above.
 
+That is the fallback. What a program reports about itself wins over it:
+`paneFormat` carries tmux's `pane_program_state` and `pane_program_message`
+(OSC 7501, tmux after 3.8), and `reported.apply` maps `blocked` and `error` to
+Notify with the program's own line as `Session.Notice`, `working` to Working,
+`idle` and `done` to Idle. The most urgent pane of a session speaks for it. On
+an older tmux both fields expand to nothing and only the fallback runs. A
+remote host is read with the same format, so its sessions get this for free;
+the screen of a remote pane is never read.
+
 ### Peer binding — join by cwd, not name
 
 `cp3 peers --json` gives `{name, up, pending, machine, cwd, summary}`. A

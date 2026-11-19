@@ -169,14 +169,29 @@ func renderHeader(styles Styles, l tableLayout) string {
 // reads "idle": long enough that a between-turns pause does not flap.
 const idleThreshold = 15 * time.Minute
 
-// renderStatus is the status cell, in priority order: a bell-rung Notify wins
-// outright; then a live summary; then a Working agent's verb and elapsed;
-// then "idle" for an agent parked past idleThreshold. A plain shell has
-// nothing to say here.
+// blinkOn is the phase of everything that blinks, half a second each way.
+//
+// It is read off the clock the row is drawn with, not asked of the terminal:
+// SGR blink is ignored by most terminals now. Both phases stay readable and
+// the same width, because a popup on tmux before 3.7 never redraws and would
+// otherwise freeze on whichever one it opened with.
+func blinkOn(now time.Time) bool { return now.UnixMilli()/500%2 == 0 }
+
+// renderStatus is the status cell, in priority order: a session that needs
+// the user wins outright, with what it is waiting for when it said; then a
+// live summary; then a Working agent's verb and elapsed; then "idle" for an
+// agent parked past idleThreshold. A plain shell has nothing to say here.
 func renderStatus(styles Styles, now time.Time, s session.Session) string {
 	switch {
 	case s.State == session.StateNotify:
-		return styles.Error.Render("needs you")
+		label := styles.Error
+		if blinkOn(now) {
+			label = label.Reverse(true)
+		}
+		if s.Notice == "" {
+			return label.Render("needs you")
+		}
+		return label.Render("needs you") + styles.Summary.Render(" · "+s.Notice)
 	case s.EffectiveSummary() != "":
 		return styles.Summary.Render(s.EffectiveSummary())
 	case s.State == session.StateWorking && s.WorkingVerb != "":
@@ -222,7 +237,7 @@ func renderPeer(styles Styles, s session.Session) string {
 // column's counted width never depends on how many apps a session runs. The
 // app that is the session's agent reflects its live state: a spinner while
 // Working, blinking on Notify, static otherwise.
-func renderIcons(s session.Session, sp spinner.Model) string {
+func renderIcons(s session.Session, sp spinner.Model, now time.Time) string {
 	// An ASCII tag is two cells and needs its own gap, so its slot is one
 	// wider; the column is then cut to its layout width like any other cell.
 	width := iconSlotWidth
@@ -234,7 +249,7 @@ func renderIcons(s session.Session, sp spinner.Model) string {
 	for i := range slots {
 		if i < len(s.Apps) {
 			app := s.Apps[i]
-			slots[i] = slot.Render(renderIcon(iconFor(app), s.State, session.IsAgentApp(app), sp))
+			slots[i] = slot.Render(renderIcon(iconFor(app), s.State, session.IsAgentApp(app), sp, blinkOn(now)))
 		} else {
 			slots[i] = slot.Render("")
 		}
@@ -242,7 +257,7 @@ func renderIcons(s session.Session, sp spinner.Model) string {
 	return lipgloss.NewStyle().Width(maxIcons * width).Render(lipgloss.JoinHorizontal(lipgloss.Top, slots...))
 }
 
-func renderIcon(icon Icon, state session.AgentState, isAgent bool, sp spinner.Model) string {
+func renderIcon(icon Icon, state session.AgentState, isAgent bool, sp spinner.Model, on bool) string {
 	style := lipgloss.NewStyle().Foreground(icon.Color).Bold(true)
 	if !isAgent {
 		return style.Render(icon.Glyph)
@@ -251,7 +266,7 @@ func renderIcon(icon Icon, state session.AgentState, isAgent bool, sp spinner.Mo
 	case session.StateWorking:
 		return style.Render(sp.View())
 	case session.StateNotify:
-		return style.Blink(true).Render(icon.Glyph)
+		return style.Bold(on).Faint(!on).Render(icon.Glyph)
 	default: // StateIdle; StateNone cannot reach here since isAgent implies Agent
 		return style.Render(icon.Glyph)
 	}

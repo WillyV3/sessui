@@ -115,7 +115,7 @@ var columnCatalog = map[columnID]column{
 	},
 	colApps: {
 		id: colApps, label: "apps", width: iconColWidth, minWidth: iconSlotWidth,
-		render: func(c cell) string { return renderIcons(c.session, c.spinner) },
+		render: func(c cell) string { return renderIcons(c.session, c.spinner, c.now) },
 	},
 	colActive: {
 		id: colActive, label: "", glyph: glyphActive, asciiLabel: "ago", width: 5, minWidth: 4,

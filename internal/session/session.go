@@ -59,6 +59,15 @@ type Session struct {
 	// "4m 34s"); empty unless State is StateWorking and the capture matched.
 	WorkingVerb    string
 	WorkingElapsed string
+
+	// Notice is what a session in StateNotify is waiting for, in its program's
+	// own words ("approve Bash: make install"). "" when it only rang the bell.
+	Notice string
+
+	// reported is the state a program in this session reported about itself
+	// (see reported), "" when none did. It outranks anything read off the
+	// screen.
+	reported string
 }
 
 // IsPeer reports whether this session is a live cp3 peer workspace.
@@ -94,7 +103,13 @@ const (
 	// ponytail: a working directory containing "|" spills into the title of
 	// that one pane. A second record type per pane would fix it; nothing has
 	// asked for it.
-	paneFormat = "#{session_id}|#{window_active}|#{pane_active}|#{window_bell_flag}|#{pane_id}|#{pane_height}|#{pane_current_command}|#{pane_current_path}|#{pane_title}"
+	//
+	// pane_program_state and pane_program_message are what the program itself
+	// told the terminal with OSC 7501 (tmux 3.9): idle, working, done, blocked
+	// or error, and one line saying what for. An older tmux expands both to
+	// nothing, which reads as "did not say". The message is free text, so its
+	// pipes are swapped out before it can split the record.
+	paneFormat = "#{session_id}|#{window_active}|#{pane_active}|#{window_bell_flag}|#{pane_id}|#{pane_height}|#{pane_program_state}|#{s/[|]/¦/:pane_program_message}|#{pane_current_command}|#{pane_current_path}|#{pane_title}"
 
 	// capturePaneLines is how much of an agent pane's tail is read to tell
 	// Working from Idle.
@@ -254,7 +269,9 @@ func classifyAgents(sessions []Session, agentPane map[string]agentPaneRef, have 
 	row := make(map[string]int, len(sessions))
 	for i := range sessions {
 		s := &sessions[i]
-		if !s.Agent || s.State == StateNotify {
+		// An agent that says it is at rest is believed: its scrollback can hold
+		// every shape a working pane has.
+		if !s.Agent || s.State == StateNotify || s.reported == "idle" || s.reported == "done" {
 			continue
 		}
 		ref, ok := agentPane[s.Name]
@@ -296,6 +313,9 @@ func classifyAgents(sessions []Session, agentPane map[string]agentPaneRef, have 
 		s := &sessions[row[ref.ID]]
 		capture := captures[ref.ID]
 		s.State = Classify(true, false, capture)
+		if s.reported == "working" {
+			s.State = StateWorking // the screen is only read for the verb
+		}
 		if s.State == StateWorking {
 			s.WorkingVerb, s.WorkingElapsed = extractWorkingStatus(capture)
 		}
@@ -492,7 +512,7 @@ func Build(sessOut, paneOut string, fleet peerFleet, current string) ([]Session,
 	for _, m := range metas {
 		names[m.id] = m.name
 	}
-	cwds, apps, bell, agentPane, titles := parsePanes(paneOut, names)
+	cwds, apps, bell, agentPane, titles, said := parsePanes(paneOut, names)
 	peersByCWD, peersByName := indexPeers(fleet)
 
 	sessions := make([]Session, 0, len(metas))
@@ -517,6 +537,8 @@ func Build(sessOut, paneOut string, fleet peerFleet, current string) ([]Session,
 			owedMail = row.Pending > 0
 		}
 
+		state, notice := said[m.name].apply(agent, Classify(agent, bell[m.name], ""))
+
 		sessions = append(sessions, Session{
 			Name:         m.name,
 			Created:      m.created,
@@ -527,7 +549,9 @@ func Build(sessOut, paneOut string, fleet peerFleet, current string) ([]Session,
 			CWD:          cwd,
 			Apps:         apps[m.name],
 			Agent:        agent,
-			State:        Classify(agent, bell[m.name], ""),
+			State:        state,
+			Notice:       notice,
+			reported:     said[m.name].state,
 			PeerUp:       peerUp,
 			PeerName:     peerName,
 			OwedMail:     owedMail,
@@ -726,13 +750,14 @@ func parseSessions(raw string) []sessionMeta {
 // the cwd (active window's pane, else the first seen), the distinct non-shell
 // commands in first-seen order, whether any window's bell is set, and the
 // agent pane's id and title -- the focused pane if it runs the agent, else
-// the first agent pane seen.
-func parsePanes(raw string, names map[string]string) (cwds map[string]string, apps map[string][]string, bell map[string]bool, agentPane map[string]agentPaneRef, titles map[string]string) {
+// the first agent pane seen -- and the most urgent state any pane reported.
+func parsePanes(raw string, names map[string]string) (cwds map[string]string, apps map[string][]string, bell map[string]bool, agentPane map[string]agentPaneRef, titles map[string]string, said map[string]reported) {
 	cwds = map[string]string{}
 	apps = map[string][]string{}
 	bell = map[string]bool{}
 	agentPane = map[string]agentPaneRef{}
 	titles = map[string]string{}
+	said = map[string]reported{}
 
 	fallbackCWD := map[string]string{}
 	activeCWD := map[string]bool{}
@@ -744,8 +769,8 @@ func parsePanes(raw string, names map[string]string) (cwds map[string]string, ap
 		if line == "" {
 			continue
 		}
-		f := strings.SplitN(line, "|", 9)
-		if len(f) != 9 {
+		f := strings.SplitN(line, "|", 11)
+		if len(f) != 11 {
 			continue
 		}
 		name, ok := names[f[0]]
@@ -753,7 +778,7 @@ func parsePanes(raw string, names map[string]string) (cwds map[string]string, ap
 			continue // a session created between the two listings; the next reload has it
 		}
 		windowActive, paneActive, bellFlag := f[1] == "1", f[2] == "1", f[3] == "1"
-		cmd, path, title := f[6], f[7], f[8]
+		cmd, path, title := f[8], f[9], f[10]
 		// A height that will not parse costs the batched capture, nothing else:
 		// zero fails the batch's arithmetic and sends it down the per-pane path.
 		// The row itself still carries this session's cwd, apps and agent, so
@@ -770,6 +795,11 @@ func parsePanes(raw string, names map[string]string) (cwds map[string]string, ap
 		}
 		if bellFlag {
 			bell[name] = true
+		}
+		// Every pane counts, not only the agent's own: a question waiting in a
+		// split nobody is looking at is the one that gets missed.
+		if urgency[f[6]] > urgency[said[name].state] {
+			said[name] = reported{state: f[6], message: f[7]}
 		}
 
 		if !shellCommands[cmd] {
@@ -806,7 +836,7 @@ func parsePanes(raw string, names map[string]string) (cwds map[string]string, ap
 		}
 	}
 
-	return cwds, apps, bell, agentPane, titles
+	return cwds, apps, bell, agentPane, titles, said
 }
 
 // humanizeDuration renders a span compactly: "now", "8s", "3m", "2h", "5d", "3w".

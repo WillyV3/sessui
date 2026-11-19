@@ -27,7 +27,7 @@ const (
 	StateNone    AgentState = iota // no AI agent running in the session
 	StateIdle                      // agent present, waiting for input
 	StateWorking                   // agent is actively generating
-	StateNotify                    // agent needs the user (tmux bell rang)
+	StateNotify                    // needs the user: it said so, or the tmux bell rang
 )
 
 func (s AgentState) String() string {
@@ -41,6 +41,43 @@ func (s AgentState) String() string {
 	default:
 		return "none"
 	}
+}
+
+// reported is what a program said about itself with OSC 7501, the program
+// status protocol, as tmux hands it on. The zero value is a program that said
+// nothing, which is all of them on a tmux older than 3.9.
+type reported struct {
+	state   string // idle, working, done, blocked or error
+	message string // one line: what it is doing, or what it is waiting for
+}
+
+// urgency ranks the reported states, so a session of several panes shows the
+// one that most needs a look. Anything else a pane might say ranks nowhere.
+var urgency = map[string]int{"idle": 1, "done": 2, "working": 3, "error": 4, "blocked": 5}
+
+// apply lets what the program reported overrule fallback, the state guessed
+// from the bell and the screen, and returns what it is waiting for.
+//
+// Blocked and failed are heard from any program, since a deploy asking for
+// approval needs its user as much as an agent does. Working and resting are
+// taken only for an agent, which is the only thing the list draws them for,
+// and never over a bell nobody has answered yet.
+func (r reported) apply(agent bool, fallback AgentState) (AgentState, string) {
+	switch r.state {
+	case "blocked":
+		return StateNotify, r.message
+	case "error":
+		return StateNotify, strings.TrimSuffix("failed: "+r.message, ": ")
+	case "working":
+		if agent && fallback != StateNotify {
+			return StateWorking, ""
+		}
+	case "idle", "done":
+		if agent && fallback != StateNotify {
+			return StateIdle, ""
+		}
+	}
+	return fallback, ""
 }
 
 // agentApps are commands that run an AI coding agent.

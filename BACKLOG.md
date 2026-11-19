@@ -25,6 +25,15 @@ than on a measurement.
 its local proxy: the ssh exits, the pane closes, tmux drops the session with its
 last window. That chain is argued in a comment and never actually watched.
 
+**What a program reports needs a tmux that is not released yet.** tmux main
+has carried OSC 7501 since 2026-11-12; 3.8 and older drop it, and there the
+bell and the screen are all there is. It was run against a build of main with
+Claude Code and pi. Codex, crush and the others that send it were not run.
+
+**A finished turn reads as idle.** The protocol's `done` means the result is
+ready and unseen. tmux keeps it until the program's next report, not until you
+look, so it cannot yet mean "unread" and is shown as nothing.
+
 ## Worth considering
 
 **Create on a machine you have not added yet.** Putting a session on another box

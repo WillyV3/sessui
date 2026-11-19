@@ -102,6 +102,28 @@ Everything else is `~/.config/sessui/config.json`, written for you by `ctrl+e`:
 | `columns` | `[{"id","width"}]` | which columns, in what order |
 | `hosts` | `["alias"]` | machines to watch |
 
+## When an agent needs you
+
+A session stopped on a question or a permission prompt moves to the top of the
+list, blinks, and says what it is waiting for:
+
+```
+needs you · approve Bash: make install
+```
+
+sessui does not read the agent's screen to learn this. The agent says so
+itself, with the [program status protocol](https://www.superlogical.com/rex/docs/build/program-status)
+(OSC 7501), and tmux passes it on. Nothing here is specific to one agent:
+whatever speaks the protocol is heard, in any pane, on this machine or
+another. Tested with Claude Code and pi, neither of which needed any setup.
+
+tmux carries the protocol from the version after 3.8 (its main branch since
+November 2026), and an agent only starts reporting once it is restarted inside
+one. On an older tmux the terminal bell does the job, with less to say: a
+session that rings shows `needs you` until you visit it. Most agents can be
+told to ring; for Claude Code it is `"preferredNotifChannel": "terminal_bell"`
+in `~/.claude/settings.json`.
+
 ## With cp3
 
 Running [cp3](https://github.com/WillyV3/cp3)? sessui matches
