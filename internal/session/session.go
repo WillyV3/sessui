@@ -798,7 +798,12 @@ func parsePanes(raw string, names map[string]string) (cwds map[string]string, ap
 		}
 		// Every pane counts, not only the agent's own: a question waiting in a
 		// split nobody is looking at is the one that gets missed.
-		if urgency[f[6]] > urgency[said[name].state] {
+		//
+		// Except a pane back at its shell. tmux cannot see a program exit, so
+		// one killed at a prompt leaves "blocked" behind for good, and the
+		// session would blink at the top with nobody asking. The cost is an
+		// agent run through `sh -c` without exec, which tmux also calls a shell.
+		if !shellCommands[cmd] && urgency[f[6]] > urgency[said[name].state] {
 			said[name] = reported{state: f[6], message: f[7]}
 		}
 

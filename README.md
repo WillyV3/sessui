@@ -119,10 +119,9 @@ another. Tested with Claude Code and pi, neither of which needed any setup.
 
 tmux carries the protocol from the version after 3.8 (its main branch since
 November 2026), and an agent only starts reporting once it is restarted inside
-one. On an older tmux the terminal bell does the job, with less to say: a
-session that rings shows `needs you` until you visit it. Most agents can be
-told to ring; for Claude Code it is `"preferredNotifChannel": "terminal_bell"`
-in `~/.claude/settings.json`.
+one. On an older tmux the terminal bell is all there is: a session that rings
+shows `needs you` until you visit it. A bell cannot say what for, and an agent
+set to ring when it finishes a turn will read the same as one asking.
 
 ## With cp3
 

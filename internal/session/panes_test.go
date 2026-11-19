@@ -87,7 +87,7 @@ func TestBuildExcludesCurrentAndSortsByLastAttached(t *testing.T) {
 // agent's own.
 func TestReportedStateIsBelieved(t *testing.T) {
 	var sessions strings.Builder
-	for _, name := range []string{"ask", "fail", "busy", "rest", "tool", "make", "rang", "odd"} {
+	for _, name := range []string{"ask", "fail", "busy", "rest", "tool", "make", "rang", "odd", "dead"} {
 		sessions.WriteString("$" + name + "|1700000000|1700000900|0|1|1700000900|" + name + "\n")
 	}
 	// id|window_active|pane_active|bell|pane|height|reported|message|command|cwd|title
@@ -100,7 +100,8 @@ func TestReportedStateIsBelieved(t *testing.T) {
 		"$tool|1|1|0|%6|40|blocked|Apply 3 to add?|terraform|/w/tool|not an agent\n" +
 		"$make|1|1|0|%7|40|working||cargo|/w/make|not an agent\n" +
 		"$rang|1|1|1|%8|40|working||claude|/w/rang|bell not yet answered\n" +
-		"$odd|1|1|0|%9|40|napping||claude|/w/odd|a state nobody defined\n"
+		"$odd|1|1|0|%9|40|napping||claude|/w/odd|a state nobody defined\n" +
+		"$dead|1|1|0|%10|40|blocked|Apply 3 to add?|bash|/w/dead|killed at its prompt, shell is back\n"
 
 	built, agentPane := Build(sessions.String(), panes, peerFleet{}, "")
 
@@ -126,6 +127,7 @@ func TestReportedStateIsBelieved(t *testing.T) {
 		"make": {StateNone, ""},
 		"rang": {StateNotify, ""},
 		"odd":  {StateIdle, ""},
+		"dead": {StateNone, ""},
 	}
 	if len(built) != len(want) {
 		t.Fatalf("got %d sessions, want %d", len(built), len(want))
