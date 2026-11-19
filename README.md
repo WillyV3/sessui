@@ -72,6 +72,23 @@ sessions, or why it did not answer.
 `host/name`. After that it's a normal local session — instant to switch back to,
 and it stops showing twice. Kill and rename work on it too.
 
+Inside a remote session there is one tmux, the far one. Your local tmux steps
+aside for that session: its prefix, its shortcuts and its status line are off,
+so every key and click goes to the machine you are looking at. Your other
+sessions are untouched.
+
+- **Back:** detach (`prefix d`). The view closes and you are in the local
+  session you came from. The remote session keeps running.
+- **Copying:** selection and copy mode are the far tmux's. What you copy
+  reaches this machine's clipboard only with `set -g set-clipboard on` in
+  your local tmux.conf; tmux's default keeps it on the far machine.
+- **Stuck connection:** `enter` `~` `.` makes ssh hang up, which does the same.
+  A dead connection also closes by itself after about 45 seconds.
+- **sessui on the far machine too:** `prefix s` there opens that machine's
+  list, and its own sessions switch as usual. It will not open a session on a
+  third machine from inside your view, or lead you back to the one you are
+  sitting at: it tells you to detach and open it from your own machine.
+
 Creating: type a name, `←→` to pick a machine, `enter`. Plain `enter` still
 creates locally.
 

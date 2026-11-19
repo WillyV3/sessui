@@ -471,3 +471,19 @@ func TestNeedsYouSaysWhatForAndBlinksInPlace(t *testing.T) {
 		t.Errorf("status without a notice: %q", got)
 	}
 }
+
+// Why an action failed stays on screen through the reloads that follow it,
+// which come every second, and goes with the next key press.
+func TestActionErrorOutlivesAReload(t *testing.T) {
+	m, _ := send(New(), tea.WindowSizeMsg{Width: 112, Height: 26})
+	m, _ = send(m, reloadMsg{sessions: []session.Session{{Name: "alpha"}}})
+	m, _ = send(m, doAndQuit(func() error { return errors.New("no route to host") })())
+	m, _ = send(m, reloadMsg{sessions: []session.Session{{Name: "alpha"}}})
+	if !strings.Contains(m.View(), "no route to host") {
+		t.Errorf("the reason was gone after one reload:\n%s", m.View())
+	}
+	m, _ = send(m, keyOf(tea.KeyDown))
+	if strings.Contains(m.View(), "no route to host") {
+		t.Error("the reason outlived the next key press")
+	}
+}

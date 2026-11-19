@@ -45,6 +45,21 @@ instead — the cost is that picking one implies watching it.
 `classifyAgents()`. Concurrency would roughly halve the full load — but
 `ListFast` already paints first, so nobody is waiting on this.
 
+**A proxy session on another machine is listed there as a session.** Watch
+machine B from machine A while A has `B/work` open, and B's list shows A's
+`B/work` as a remote row. It is a view, not a session; opening it is a round
+trip to where you already are. Refused from a nested view, still offered from
+B's own terminal.
+
+**A key bound by hand does not carry `SESSUI_NESTED`.** Only the binding
+`sessui.tmux` makes says whether the client is inside another tmux, so a
+hand-written `display-popup` binding gets no refusal and can still nest.
+
+**No single key from a remote session to the local list.** It is detach, then
+`prefix s`. Making it one key means taking that key from every program on the
+far machine; an opt-in `@sessui-home-key` set as the proxy session's `prefix`
+does it in one line (tried with F12, it works).
+
 **Connection multiplexing is enabled without asking.** `ControlMaster=auto` with
 `ControlPersist=60s` is what makes the fan-out affordable, but it leaves an
 authenticated socket alive for a minute. Mode 0600, owned by you, namespaced

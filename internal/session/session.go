@@ -458,8 +458,20 @@ func hasSession(name string) bool {
 }
 
 // Switch makes tmux switch the client to the named session.
+//
+// A proxy for a remote session is entered here too, the second time and every
+// time after: once it exists it is a local row like any other. So this is
+// where the local tmux steps aside in it, which also covers a proxy an older
+// sessui left on the server.
 func Switch(name string) error {
-	return exec.Command("tmux", "switch-client", "-t", exact(name)).Run()
+	args := []string{"switch-client", "-t", exact(name)}
+	if isProxy(name) {
+		if nested() {
+			return errNested
+		}
+		args = append(append(stepAside(name), ";"), args...)
+	}
+	return exec.Command("tmux", args...).Run()
 }
 
 // New creates a detached session named name and switches the client to it.

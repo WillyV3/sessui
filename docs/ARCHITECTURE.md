@@ -189,6 +189,29 @@ attachment in a local session named `host/name`. After that the row is an
 ordinary local session: every later switch is an instant `switch-client`.
 `Merge` drops a remote session whose proxy already exists locally.
 
+A proxy is two tmuxes deep, and the user should only ever feel one. So
+`stepAside` turns the local one off in that session alone: `prefix None`, an
+empty `key-table`, `status off`. Every key and mouse event then falls through
+to the pane, which is the far tmux. The way back needs no key of ours:
+`detach-on-destroy off` means that detaching over there, which ends ssh and
+with it the session, moves the client to the session it was in before instead
+of throwing it out of tmux.
+
+This happens in `Switch`, not in `AttachRemote`: once a proxy exists its row
+is local, so `Switch` is the only door the second time. `isProxy` tells one by
+what its pane was started with (our ssh control path), never by its name, so
+a session someone happened to call `box/api` keeps its prefix, and a proxy
+left by an older sessui is stepped aside in the next time it is entered.
+
+The far machine needs nothing for this. When it does run sessui, the key
+binding tells it whether the client that pressed the key is itself inside
+another tmux (`SESSUI_NESTED`, from `#{client_termtype}`: a terminal answers
+with its name, and tmux answers "tmux"). The binding has to say it because
+one session can hold a nested client and a direct one at once. From a nested
+view `AttachRemote`, `NewRemote` and a `Switch` to an open proxy refuse: a
+third layer, or a hop back to the machine the user is sitting at, is never
+what they meant.
+
 The separator is `/`, not `:` — tmux accepts a session named `host:name` and
 then cannot target it, because `:` is its session:window separator.
 

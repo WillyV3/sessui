@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -155,6 +156,10 @@ func hostErr(ctx context.Context, err error) error {
 	return err
 }
 
+// controlPath starts the name of every multiplexing socket sessui makes. It
+// is also how a proxy session is told from an ordinary one: see isProxy.
+const controlPath = "ControlPath=~/.ssh/sessui-"
+
 // sshArgs is the transport decision in one place: shell out to ssh rather
 // than dial with a Go client, so ~/.ssh/config governs everything --
 // ProxyJump, certificates, agent forwarding, Match, Include.
@@ -171,7 +176,7 @@ func sshArgs(alias string) []string {
 		"-o", "ServerAliveInterval=15",
 		"-o", "ServerAliveCountMax=3",
 		"-o", "ControlMaster=auto",
-		"-o", "ControlPath=~/.ssh/sessui-%r@%h:%p",
+		"-o", controlPath + "%r@%h:%p",
 		"-o", "ControlPersist=60s",
 		alias,
 	}
@@ -216,16 +221,78 @@ func ProxyName(host, name string) string { return host + ProxySep + name }
 // later switch is an instant switch-client with no special case in the UI.
 // Idempotent: a second enter reuses the existing proxy.
 func AttachRemote(host, name string) error {
+	if nested() {
+		return errNested
+	}
 	proxy := ProxyName(host, name)
 	if !hasSession(proxy) {
-		remote := remotePrelude + "tmux attach -t " + quote(exact(name))
-		cmd := "ssh " + strings.Join(sshArgs(host), " ") + " -t " + quote(remote)
-		if err := exec.Command("tmux", "new-session", "-d", "-s", proxy, cmd).Run(); err != nil {
+		if err := exec.Command("tmux", "new-session", "-d", "-s", proxy, proxyCommand(host, name)).Run(); err != nil {
 			return err
 		}
 	}
 	return Switch(proxy)
 }
+
+// proxyCommand is what a proxy session runs: ssh, attached to the far session.
+func proxyCommand(host, name string) string {
+	remote := remotePrelude + "tmux attach -t " + quote(exact(name))
+	return "ssh " + strings.Join(sshArgs(host), " ") + " -t " + quote(remote)
+}
+
+// isProxy reports whether a local session is one of ours looking at a remote
+// one. By what it runs, not by its name: anyone may call a session "box/api",
+// and stepping aside in that would leave it with no prefix at all. A proxy
+// the user has since opened a local window in reads as ordinary for the same
+// reason, as long as that window is the one in front.
+func isProxy(name string) bool {
+	if !strings.Contains(name, ProxySep) {
+		return false // the usual switch pays nothing for this
+	}
+	out, _ := tmuxRead("display-message", "-p", "-t", exact(name)+":", "#{pane_start_command}").Output()
+	return strings.Contains(string(out), controlPath)
+}
+
+// proxyTable is a key table with nothing bound in it.
+const proxyTable = "sessui-remote"
+
+// stepAside is the tmux commands that take the local tmux out of the way in a
+// proxy session, so the user is only ever talking to one tmux: the far one.
+// No prefix and an empty key table send every key and click through, no
+// status line leaves the far one as the only one, and detach-on-destroy off
+// is the way back: detaching over there closes the proxy and lands the
+// client on the session it was in before, still attached here.
+//
+// All of it is per session; nothing about the user's other sessions changes.
+// What it costs: the local copy mode cannot be reached in a proxy, so copying
+// there is the far tmux's, and reaches this machine's clipboard only when the
+// local tmux has set-clipboard on.
+func stepAside(proxy string) []string {
+	target := exact(proxy) + ":" // set-option wants the colon to read "=name" as a session
+	var args []string
+	for _, o := range [][2]string{
+		{"prefix", "None"}, {"prefix2", "None"}, {"key-table", proxyTable},
+		{"status", "off"}, {"detach-on-destroy", "off"},
+	} {
+		if args != nil {
+			args = append(args, ";")
+		}
+		args = append(args, "set-option", "-t", target, o[0], o[1])
+	}
+	return args
+}
+
+// errNested is why a remote row will not open from a view that is already
+// inside another tmux.
+var errNested = errors.New("this is a view from another tmux: detach, then open that session from your own machine")
+
+// nested reports whether the client that opened sessui is itself shown inside
+// another tmux, which is what a proxy session on someone's own machine is.
+// Opening a remote session from here would put a third tmux inside the
+// second, or lead back to the machine the user is sitting at over two hops.
+//
+// The key binding says so (sessui.tmux): only it knows which client pressed
+// the key, and one session can have a nested client and a direct one at once.
+func nested() bool { return os.Getenv("SESSUI_NESTED") != "" }
 
 // quote wraps a value for the shell tmux hands the command to.
 func quote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
@@ -234,6 +301,9 @@ func quote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + 
 // created detached first, so it survives if the attach fails or the user
 // backs out: a session that exists is recoverable.
 func NewRemote(host, name string) error {
+	if nested() {
+		return errNested // before the ssh: do not leave a session behind that we then refuse to open
+	}
 	// `new-session` fails when the name is taken, and "already there" is no
 	// reason to refuse to take the user to it.
 	remote := remotePrelude + "tmux has-session -t " + quote(exact(name)) + " 2>/dev/null || tmux new-session -d -s " + quote(name)

@@ -46,6 +46,9 @@ type reloadMsg struct {
 	partial bool
 }
 
+// actionFailedMsg is an action the user asked for that did not happen.
+type actionFailedMsg struct{ err error }
+
 // editorAppliedMsg is the settings editor's result, ready for Model to
 // persist and relayout from. The editor never touches Model directly.
 type editorAppliedMsg struct {
@@ -124,7 +127,12 @@ type Model struct {
 	// clears it.
 	configErr error
 
-	err           error
+	err error
+	// actionErr is why the last thing the user asked for did not happen. Its
+	// own field for the reason configErr has one: the list reloads every
+	// second and clears m.err, so the reason was gone before it could be
+	// read. It stays until the next key press.
+	actionErr     error
 	home          string
 	width, height int
 	styles        Styles
@@ -361,6 +369,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, reloadCmd(m.watcher, m.cfg.Hosts)
 
+	case actionFailedMsg:
+		m.actionErr = msg.err
+		return m, nil
+
 	case reloadMsg:
 		if msg.err != nil {
 			m.err = msg.err
@@ -393,6 +405,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Type == tea.KeyCtrlC {
 			return m, tea.Quit
 		}
+		m.actionErr = nil
 		if m.overlay != nil {
 			return m.updateOverlay(msg)
 		}
@@ -628,7 +641,7 @@ func (m Model) selectOrCreate() (tea.Model, tea.Cmd) {
 func doAndQuit(action func() error) tea.Cmd {
 	return func() tea.Msg {
 		if err := action(); err != nil {
-			return reloadMsg{err: err}
+			return actionFailedMsg{err}
 		}
 		return tea.Quit()
 	}
@@ -639,7 +652,7 @@ func doAndQuit(action func() error) tea.Cmd {
 func doAndReload(action func() error) tea.Cmd {
 	return func() tea.Msg {
 		if err := action(); err != nil {
-			return reloadMsg{err: err}
+			return actionFailedMsg{err}
 		}
 		sessions, err := session.List()
 		return reloadMsg{sessions: sessions, err: err}
@@ -695,6 +708,9 @@ func (m Model) footerLine() string {
 	// not the one they saved.
 	if m.configErr != nil {
 		return m.styles.Error.Render("config: " + m.configErr.Error())
+	}
+	if m.actionErr != nil {
+		return m.styles.Error.Render(m.actionErr.Error())
 	}
 	if m.err != nil {
 		return m.styles.Error.Render("error: " + m.err.Error())

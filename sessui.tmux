@@ -84,4 +84,9 @@ smaller() { printf '#{?#{e|<:%s,%s},%s,%s}' "$1" "$2" "$1" "$2"; }
 # @sessui-width) applies on the very next prefix+key without re-sourcing
 # tmux.conf. Height is bound once: there is no setting for it, by design.
 width="$(smaller '#{client_width}' '#{?@sessui-width,#{@sessui-width},112}')"
-tmux bind-key "$key" run-shell "tmux display-popup -E -w '$width' -h '$(smaller '#{client_height}' "$height")' '$BIN'"
+#
+# SESSUI_NESTED is set when the client that pressed the key is itself shown
+# inside another tmux (a terminal says what it is, and tmux says "tmux"). From
+# there sessui does not open remote sessions: see nested() in remote.go.
+nested='#{?#{m:tmux*,#{client_termtype}},1,}'
+tmux bind-key "$key" run-shell "tmux display-popup -E -e 'SESSUI_NESTED=$nested' -w '$width' -h '$(smaller '#{client_height}' "$height")' '$BIN'"
