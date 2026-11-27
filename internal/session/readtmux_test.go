@@ -3,6 +3,7 @@ package session
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -29,6 +30,82 @@ func privateServer(t *testing.T) {
 		t.Skipf("tmux would not start a private server: %v: %s", err, out)
 	}
 	t.Cleanup(func() { exec.Command("tmux", "kill-server").Run() })
+}
+
+// The solid popup's edge must get popup-style as tmux expands it. Raw, a
+// popup-style that is a format (bg=#{@thm_bg}) reaches -S unexpanded and the
+// edge is left unstyled; a quote inside such a format broke the shell
+// command. Binds the real sessui.tmux, expands its run-shell command as a
+// keypress would, and reads the argv the shell hands to display-popup.
+func TestPluginPopupEdgeGetsTheExpandedPopupStyle(t *testing.T) {
+	privateServer(t)
+	realTmux, _ := exec.LookPath("tmux")
+	dir := t.TempDir()
+	script, err := os.ReadFile("../../sessui.tmux")
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"sessui.tmux": string(script),
+		"sessui":      "#!/bin/sh\n[ \"$1\" = -transparent ] && echo 0\nexit 0\n",
+		// Keeps the run-shell command bind-key is given, then binds as usual.
+		"wrap/tmux": "#!/bin/sh\n[ \"$1\" = bind-key ] && for a; do printf %s \"$a\" > \"$BOUND\"; done\nexec " + realTmux + " \"$@\"\n",
+		// Stands in for the tmux the keypress runs: prints its argv.
+		"argv/tmux": "#!/bin/sh\nfor a; do printf '%s\\n' \"$a\"; done\n",
+	}
+	for name, body := range files {
+		path := filepath.Join(dir, name)
+		os.MkdirAll(filepath.Dir(path), 0o755)
+		if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bound := filepath.Join(dir, "bound")
+	load := exec.Command("bash", filepath.Join(dir, "sessui.tmux"))
+	load.Env = append(os.Environ(), "PATH="+filepath.Join(dir, "wrap")+":"+os.Getenv("PATH"), "BOUND="+bound)
+	if out, err := load.CombinedOutput(); err != nil {
+		t.Fatalf("plugin load: %v: %s", err, out)
+	}
+	tpl, err := os.ReadFile(bound)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(tpl), "-b padded") {
+		t.Skipf("tmux before 3.3 binds the popup unstyled: %s", tpl)
+	}
+
+	exec.Command("tmux", "set", "-g", "@thm_bg", "colour236").Run()
+	for style, want := range map[string]string{
+		"bg=#1e1e2e,fg=#cdd6f4":          "bg=#1e1e2e,fg=#cdd6f4",
+		"bg=#{@thm_bg},fg=colour250":     "bg=colour236,fg=colour250",
+		"bg=#{?#{==:a,'},red,colour236}": "bg=colour236",
+		"fg=red bg=blue":                 "fg=red bg=blue",
+	} {
+		if out, err := exec.Command("tmux", "set", "-g", "popup-style", style).CombinedOutput(); err != nil {
+			t.Fatalf("popup-style %q: %v: %s", style, err, out)
+		}
+		cmd, err := exec.Command("tmux", "display-message", "-p", "-t", "probe", string(tpl)).Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		press := exec.Command("sh", "-c", strings.TrimSuffix(string(cmd), "\n"))
+		press.Env = append(os.Environ(), "PATH="+filepath.Join(dir, "argv")+":"+os.Getenv("PATH"))
+		out, err := press.CombinedOutput()
+		if err != nil {
+			t.Errorf("popup-style %q: the keypress command failed: %v: %s", style, err, out)
+			continue
+		}
+		args := strings.Split(string(out), "\n")
+		got := "(no -S)"
+		for i, a := range args {
+			if a == "-S" && i+1 < len(args) {
+				got = args[i+1]
+			}
+		}
+		if got != want {
+			t.Errorf("popup-style %q: edge got -S %q, want %q", style, got, want)
+		}
+	}
 }
 
 // A speculated pane that has closed makes tmux exit non-zero, and the session
