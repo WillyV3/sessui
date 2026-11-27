@@ -23,6 +23,11 @@ type Config struct {
 	// Hosts are the ssh aliases whose sessions are listed alongside local
 	// ones. Empty is the shipped state: no network until the user picks one.
 	Hosts []string `json:"hosts,omitempty"`
+	// Transparent gives the popup the terminal's background instead of
+	// tmux's popup-style. Off by default. tmux needs it before this binary
+	// starts, so sessui.tmux copies it into @sessui-transparent at load, and
+	// applying the editor sets that option too.
+	Transparent bool `json:"transparent,omitempty"`
 }
 
 // ThemeConfig is how the palette is chosen and, optionally, recoloured.

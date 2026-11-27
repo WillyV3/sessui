@@ -67,6 +67,7 @@ const (
 	rowStrip editorRow = iota
 	rowShelf
 	rowWidth
+	rowFill
 	rowTheme
 	rowIcons
 	rowHosts
@@ -171,6 +172,9 @@ type columnEditor struct {
 	// and is only ever a number on the width row, never a layout width.
 	width      int
 	popupWidth int
+	// transparent is the popup fill being set for the NEXT open, like
+	// popupWidth: the popup you are looking at cannot restyle itself.
+	transparent bool
 
 	row         editorRow
 	cursor      int  // index into order; on a visible entry while row == rowStrip
@@ -197,6 +201,12 @@ func newColumnEditor(styles Styles, current []columnSetting, showPeer bool, widt
 func (e *columnEditor) withTheme(t ThemeConfig, g glyphSet, restyle func(ThemeConfig, glyphSet) Styles) *columnEditor {
 	e.theme, e.icons, e.origTheme, e.origIcons, e.restyle = t, g, t, g, restyle
 	e.tint()
+	return e
+}
+
+// withTransparent seats the editor on the saved popup fill.
+func (e *columnEditor) withTransparent(on bool) *columnEditor {
+	e.transparent = on
 	return e
 }
 
@@ -365,6 +375,8 @@ func (e *columnEditor) move(delta int) {
 		}
 	case rowWidth:
 		e.adjustWidth(delta)
+	case rowFill:
+		e.transparent = !e.transparent
 	case rowTheme:
 		e.theme.Palette = cyclePalette(e.theme.Palette, delta)
 		e.tint()
@@ -499,7 +511,7 @@ func (e *columnEditor) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		e.resize(-1)
 	case "ctrl+r":
 		e.reset(defaultColumnSettings())
-		e.popupWidth = popupWidthDefault
+		e.popupWidth, e.transparent = popupWidthDefault, false
 		e.theme.Palette, e.icons = paletteAuto, glyphsNerd
 		e.tint()
 	case "ctrl+z":
@@ -530,7 +542,7 @@ func (e *columnEditor) result() (finished bool, apply tea.Cmd) {
 	if e.abandoned {
 		return true, nil
 	}
-	msg := editorAppliedMsg{columns: e.Result(), popupWidth: e.popupWidth, theme: e.theme, icons: e.icons, hosts: e.hostResult()}
+	msg := editorAppliedMsg{columns: e.Result(), popupWidth: e.popupWidth, transparent: e.transparent, theme: e.theme, icons: e.icons, hosts: e.hostResult()}
 	return true, func() tea.Msg { return msg }
 }
 
@@ -556,7 +568,7 @@ func (e *columnEditor) ShortHelp() []key.Binding {
 	case rowWidth:
 		resize.SetHelp("+/-", "adjust")
 		bindings = []key.Binding{rows, resize}
-	case rowTheme, rowIcons:
+	case rowFill, rowTheme, rowIcons:
 		move.SetHelp("←→", "choose")
 		bindings = []key.Binding{rows, move}
 	}
@@ -670,6 +682,17 @@ func (e *columnEditor) renderWidthRow(width int) string {
 	return e.controlRow("popup", e.valueCell(fmt.Sprintf("%d cols", e.popupWidth), e.row == rowWidth), hint, width)
 }
 
+// renderFillRow is the popup's background: tmux's popup-style, or the
+// terminal's own, so a wallpaper or blur shows through.
+func (e *columnEditor) renderFillRow(width int) string {
+	value := "solid"
+	if e.transparent {
+		value = "transparent"
+	}
+	hint := "popup background · transparent shows the terminal · takes effect next open"
+	return e.controlRow("fill", e.valueCell(value, e.row == rowFill), hint, width)
+}
+
 func (e *columnEditor) renderThemeRow(width int) string {
 	hint := "palette · auto follows the Omarchy theme, else dark · ←→ to change"
 	return e.controlRow("theme", e.valueCell(string(e.theme.Palette), e.row == rowTheme), hint, width)
@@ -700,7 +723,7 @@ func padRight(left, right string, width int) string {
 }
 
 // View renders the editor at the current window width: a title band with
-// the help line, the six rows, a blank line, then the live preview in the
+// the help line, the seven rows, a blank line, then the live preview in the
 // editor's current styles, so a theme choice is seen before it is applied.
 func (e *columnEditor) View() string {
 	width := e.width
@@ -714,6 +737,7 @@ func (e *columnEditor) View() string {
 		e.renderStrip(layout),
 		e.renderShelf(width),
 		e.renderWidthRow(width),
+		e.renderFillRow(width),
 		e.renderThemeRow(width),
 		e.renderIconsRow(width),
 		e.renderHostsRow(width),
