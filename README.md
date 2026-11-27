@@ -118,7 +118,7 @@ Everything else is `~/.config/sessui/config.json`, written for you by `ctrl+e`:
 |-----|--------|--|
 | `icons` | `nerd` \| `ascii` | `ascii` for terminals without a Nerd Font |
 | `theme.palette` | `auto` \| `dark` \| `light` | `auto` follows [Omarchy](https://omarchy.org) |
-| `transparent` | `false` \| `true` | the popup takes the terminal's background (wallpaper, blur) instead of tmux's `popup-style`; next open |
+| `transparent` | `false` \| `true` | the popup takes the terminal's background (wallpaper, blur) instead of tmux's `popup-style`; next open (TPM popup, see below) |
 | `columns` | `[{"id","width"}]` | which columns, in what order |
 | `hosts` | `["alias"]` | machines to watch |
 
@@ -128,7 +128,13 @@ A drawn line sits in the middle of its cell, so a fill could only stop short of
 it or run past it. `transparent` gives the fill and the edge the terminal's
 background instead. Both need tmux 3.3+ (`display-popup -b`, `-s`, `-S`).
 Before that, the popup is bound exactly as before. A binding of your own
-doesn't get either.
+doesn't get either, so `fill` in `ctrl+e` only works with the TPM popup.
+
+tmux reads `transparent` through `@sessui-transparent`. sessui manages that
+option: it copies it from `config.json` when the plugin loads and when `ctrl+e`
+applies, and a value you set yourself is overwritten. If you edit
+`config.json` by hand (or a dotfiles sync does), reload your tmux.conf before
+the change shows.
 
 ## When an agent needs you
 

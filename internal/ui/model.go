@@ -312,10 +312,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// A newly watched host must show its sessions now, not on the next
 		// poll; the editor just probed them, so the reload is a cache read.
 		hostsChanged := !slices.Equal(m.cfg.Hosts, msg.hosts)
+		saved := m.cfg.Transparent
 		m.cfg.Hosts, m.cfg.Transparent = msg.hosts, msg.transparent
 		m.retheme(msg.theme, msg.icons)
 		if err := SaveConfig(m.cfg); err != nil {
 			m.err = err
+			// Unlike hosts, it does nothing in this session: keep what the file
+			// and tmux still have, so ctrl+e reopens on the truth.
+			m.cfg.Transparent = saved
 		} else {
 			m.configErr = nil // a good write replaces whatever failed to parse
 			// Only a saved choice reaches tmux: the plugin reads the file at

@@ -430,6 +430,9 @@ func TestFailedSaveLeavesTheTmuxSettingAlone(t *testing.T) {
 	if got := option(); got != "1" {
 		t.Errorf("a failed save changed the option to %q", got)
 	}
+	if !m.cfg.Transparent {
+		t.Error("a failed save left the unsaved choice for ctrl+e to reopen on")
+	}
 }
 
 func TestEditorAbandonAppliesNothing(t *testing.T) {

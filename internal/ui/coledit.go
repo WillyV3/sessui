@@ -689,7 +689,7 @@ func (e *columnEditor) renderFillRow(width int) string {
 	if e.transparent {
 		value = "transparent"
 	}
-	hint := "popup background · transparent shows the terminal · takes effect next open"
+	hint := "popup background · transparent shows the terminal · next open, TPM popup on tmux 3.3+"
 	return e.controlRow("fill", e.valueCell(value, e.row == rowFill), hint, width)
 }
 

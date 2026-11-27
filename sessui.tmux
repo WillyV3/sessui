@@ -7,6 +7,9 @@
 #   set -g @sessui-key    's'     # prefix + <key> opens it   (default: s)
 #   set -g @sessui-width  '112'   # popup width               (default: 112 -- the table needs ~112)
 #   set -g @sessui-height '26'    # popup height              (default: 26)
+#
+# @sessui-transparent is not one of these: sessui sets it from config.json at
+# every load and on a ctrl+e apply, so a value set here is overwritten.
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -99,7 +102,8 @@ nested='#{?#{m:tmux*,#{client_termtype}},1,}'
 #
 # The binary reads config.json the way sessui does and prints 1 or 0, so the
 # file decides and no JSON tool is needed here. One without -transparent
-# (an older release) prints nothing, which reads as solid.
+# (an older release) prints nothing, which reads as solid. Only here and on a
+# ctrl+e apply: a hand edit of config.json waits for a tmux.conf reload.
 if [ "$("$BIN" -transparent 2>/dev/null)" = 1 ]; then
 	tmux set-option -g @sessui-transparent 1
 else
@@ -109,6 +113,8 @@ fi
 # exactly as it always was.
 style=""
 if printf '%s\n' "$tmux_version" | awk -F. '{ exit !($1 > 3 || ($1 == 3 && $2 >= 3)) }'; then
-	style="-b padded #{?@sessui-transparent,-s bg=terminal -S bg=terminal,-S '#{popup-style}'} "
+	# E: expands a popup-style that is itself a format (bg=#{@thm_bg}); the
+	# raw text would reach -S unexpanded and leave the edge unstyled.
+	style="-b padded #{?@sessui-transparent,-s bg=terminal -S bg=terminal,-S '#{E:popup-style}'} "
 fi
 tmux bind-key "$key" run-shell "tmux display-popup -E ${style}-e 'SESSUI_NESTED=$nested' -w '$width' -h '$(smaller '#{client_height}' "$height")' '$BIN'"
