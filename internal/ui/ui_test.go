@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -324,6 +326,109 @@ func TestEditorRowsPopupWidthAndReset(t *testing.T) {
 	press(e, keyOf(tea.KeyCtrlR))
 	if e.popupWidth != popupWidthDefault || e.row != rowStrip || !reflect.DeepEqual(e.Result(), defaultColumnSettings()) {
 		t.Errorf("reset: width %d, row %d, columns %v", e.popupWidth, e.row, e.Result())
+	}
+}
+
+// The fill row starts solid, ←→ flips it, ctrl+r puts it back, and esc
+// carries the choice out with the rest of the settings.
+func TestEditorFillRowTogglesResetsAndApplies(t *testing.T) {
+	e := testEditor(112)
+	fill := func() string { return ansi.Strip(e.renderFillRow(112)) }
+	if e.transparent || !strings.Contains(fill(), "solid") {
+		t.Fatalf("a new editor is not solid: %q", fill())
+	}
+	e.row = rowFill
+	press(e, keyOf(tea.KeyRight))
+	if !e.transparent || !strings.Contains(fill(), "transparent") {
+		t.Fatalf("→ did not make it transparent: %q", fill())
+	}
+	press(e, keyOf(tea.KeyCtrlR))
+	if e.transparent {
+		t.Error("ctrl+r left it transparent")
+	}
+
+	e = testEditor(112).withTransparent(true)
+	press(e, keyOf(tea.KeyEsc))
+	if _, apply := e.result(); apply == nil || !apply().(editorAppliedMsg).transparent {
+		t.Error("esc did not carry transparent out")
+	}
+}
+
+// Transparent survives an apply and a restart, and the editor reopens on it.
+// A config written before it existed loads solid and saves back without it.
+func TestTransparentPersistsAndOldConfigsAreUntouched(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	path, err := configPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"icons":"ascii","hosts":["box"]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old, err := LoadConfig()
+	if err != nil || old.Transparent {
+		t.Fatalf("old config: transparent %v, err %v", old.Transparent, err)
+	}
+	if err := SaveConfig(old); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(path); strings.Contains(string(data), "transparent") {
+		t.Errorf("save added the key to an old config:\n%s", data)
+	}
+
+	m := New()
+	m, _ = send(m, editorAppliedMsg{columns: m.columns, popupWidth: popupWidthDefault, transparent: true, theme: m.cfg.Theme, icons: m.cfg.Icons, hosts: m.cfg.Hosts})
+	if !m.cfg.Transparent {
+		t.Fatal("apply did not set it")
+	}
+	restarted := New()
+	if !restarted.cfg.Transparent || restarted.cfg.Icons != glyphsASCII || !slices.Equal(restarted.cfg.Hosts, []string{"box"}) {
+		t.Fatalf("after restart: %+v", restarted.cfg)
+	}
+	restarted, _ = send(restarted, keyOf(tea.KeyCtrlE))
+	if e, ok := restarted.overlay.(*columnEditor); !ok || !e.transparent {
+		t.Error("the editor did not reopen on transparent")
+	}
+}
+
+// A save that fails leaves tmux as it was: the plugin reads the file at its
+// next load, so setting the option for an unsaved choice would flip back.
+// Runs a private tmux server on TestMain's socket directory.
+func TestFailedSaveLeavesTheTmuxSettingAlone(t *testing.T) {
+	if err := exec.Command("tmux", "-f", "/dev/null", "new-session", "-d", "-s", "probe").Run(); err != nil {
+		t.Skipf("no tmux server: %v", err)
+	}
+	t.Cleanup(func() { exec.Command("tmux", "kill-server").Run() })
+	option := func() string {
+		out, _ := exec.Command("tmux", "show-option", "-gqv", "@sessui-transparent").Output()
+		return strings.TrimSpace(string(out))
+	}
+
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	m := New()
+	apply := func(on bool) {
+		m, _ = send(m, editorAppliedMsg{columns: m.columns, popupWidth: popupWidthDefault, transparent: on, theme: m.cfg.Theme, icons: m.cfg.Icons, hosts: m.cfg.Hosts})
+	}
+	apply(true)
+	if got := option(); got != "1" {
+		t.Fatalf("a saved apply set the option to %q", got)
+	}
+
+	// A file where the config directory should be: the save fails.
+	blocked := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(blocked, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_CONFIG_HOME", blocked)
+	apply(false)
+	if m.err == nil {
+		t.Fatal("the save did not fail")
+	}
+	if got := option(); got != "1" {
+		t.Errorf("a failed save changed the option to %q", got)
 	}
 }
 

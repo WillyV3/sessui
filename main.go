@@ -36,10 +36,22 @@ func main() {
 	dump := flag.Bool("dump", false, "print rendered session rows as plain text and exit (no TUI)")
 	hosts := flag.Bool("hosts", false, "list ssh hosts and their tmux sessions as plain text and exit (no TUI)")
 	showVersion := flag.Bool("version", false, "print the release version and exit")
+	transparent := flag.Bool("transparent", false, "print 1 if config.json asks for a transparent popup, else 0, and exit (for sessui.tmux)")
 	flag.Parse()
 
 	if *showVersion {
 		fmt.Println(resolvedVersion())
+		return
+	}
+	if *transparent {
+		// The same parse sessui itself does, so an unreadable file is solid
+		// here exactly as it is in the UI.
+		cfg, _ := ui.LoadConfig()
+		if cfg.Transparent {
+			fmt.Println(1)
+		} else {
+			fmt.Println(0)
+		}
 		return
 	}
 	if *dump {

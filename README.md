@@ -35,6 +35,8 @@ it to fit; with your own binding, use sizes like `-w 90% -h 80%` if you work
 in small windows.
 
 Needs **tmux 3.7+**. Earlier versions open the popup but never redraw it.
+Before 3.3, the TPM popup also keeps tmux's own border and style, and
+`transparent` has no effect (see [Settings](#settings)).
 
 ## Keys
 
@@ -116,8 +118,17 @@ Everything else is `~/.config/sessui/config.json`, written for you by `ctrl+e`:
 |-----|--------|--|
 | `icons` | `nerd` \| `ascii` | `ascii` for terminals without a Nerd Font |
 | `theme.palette` | `auto` \| `dark` \| `light` | `auto` follows [Omarchy](https://omarchy.org) |
+| `transparent` | `false` \| `true` | the popup takes the terminal's background (wallpaper, blur) instead of tmux's `popup-style`; next open |
 | `columns` | `[{"id","width"}]` | which columns, in what order |
 | `hosts` | `["alias"]` | machines to watch |
+
+The TPM popup has no border line. Its edge is a row of blank cells in the
+popup's own style (tmux's `popup-style`), so a solid popup is one flush block.
+A drawn line sits in the middle of its cell, so a fill could only stop short of
+it or run past it. `transparent` gives the fill and the edge the terminal's
+background instead. Both need tmux 3.3+ (`display-popup -b`, `-s`, `-S`).
+Before that, the popup is bound exactly as before. A binding of your own
+doesn't get either.
 
 ## When an agent needs you
 

@@ -89,4 +89,26 @@ width="$(smaller '#{client_width}' '#{?@sessui-width,#{@sessui-width},112}')"
 # inside another tmux (a terminal says what it is, and tmux says "tmux"). From
 # there sessui does not open remote sessions: see nested() in remote.go.
 nested='#{?#{m:tmux*,#{client_termtype}},1,}'
-tmux bind-key "$key" run-shell "tmux display-popup -E -e 'SESSUI_NESTED=$nested' -w '$width' -h '$(smaller '#{client_height}' "$height")' '$BIN'"
+#
+# The popup's border is blank cells in the popup's own style (padded): a
+# drawn line sits mid-cell, so a fill can only stop short of it or run past
+# it, never meet it. Transparent gives fill and border the terminal's
+# background; the choice is made in ctrl+e and kept in config.json, and tmux
+# needs it before the binary runs, so it is copied into @sessui-transparent
+# here (applying ctrl+e sets it too). Read at OPEN time, like the width.
+#
+# The binary reads config.json the way sessui does and prints 1 or 0, so the
+# file decides and no JSON tool is needed here. One without -transparent
+# (an older release) prints nothing, which reads as solid.
+if [ "$("$BIN" -transparent 2>/dev/null)" = 1 ]; then
+	tmux set-option -g @sessui-transparent 1
+else
+	tmux set-option -g @sessui-transparent 0
+fi
+# display-popup -b, -s and -S are tmux 3.3+: before that the popup is bound
+# exactly as it always was.
+style=""
+if printf '%s\n' "$tmux_version" | awk -F. '{ exit !($1 > 3 || ($1 == 3 && $2 >= 3)) }'; then
+	style="-b padded #{?@sessui-transparent,-s bg=terminal -S bg=terminal,-S '#{popup-style}'} "
+fi
+tmux bind-key "$key" run-shell "tmux display-popup -E ${style}-e 'SESSUI_NESTED=$nested' -w '$width' -h '$(smaller '#{client_height}' "$height")' '$BIN'"
