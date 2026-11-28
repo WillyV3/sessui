@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Config is everything sessui persists between runs. Popup geometry is not
@@ -23,14 +24,14 @@ type Config struct {
 	// Hosts are the ssh aliases whose sessions are listed alongside local
 	// ones. Empty is the shipped state: no network until the user picks one.
 	Hosts []string `json:"hosts,omitempty"`
-	// Transparent gives the popup the terminal's background instead of
-	// tmux's popup-style. Off by default. tmux needs it before this binary
-	// starts, so sessui.tmux copies it into @sessui-transparent at load, and
-	// applying the editor sets that option too.
+	// Transparent gives the popup the terminal's background. Off by default:
+	// the popup is filled with the palette's background, so a light palette
+	// is readable on a dark terminal. tmux draws the fill and needs it before
+	// this binary's UI starts, so sessui.tmux asks for it at every open: see
+	// PopupFlags.
 	Transparent bool `json:"transparent,omitempty"`
 	// Borderless swaps tmux's own popup border for a flush edge of blank
 	// cells. Off by default, so the popup looks like every other tmux popup.
-	// It reaches tmux the way Transparent does, as @sessui-borderless.
 	Borderless bool `json:"borderless,omitempty"`
 }
 
@@ -134,4 +135,45 @@ func SaveConfig(c Config) error {
 		return fmt.Errorf("install %s: %w", path, err)
 	}
 	return nil
+}
+
+// PopupFlags is the display-popup flags that draw the popup config.json asks
+// for. sessui.tmux runs `sessui -popup-flags` each time the key is pressed and
+// splices the answer into the command, so the file is read at open time and
+// there is nothing to keep in step with it.
+//
+// popupStyle and borderStyle are tmux's popup-style and popup-border-style,
+// already expanded: only tmux knows them, and the flush edge and the border
+// are built from them. No flag carries a space, so the shell can split the
+// answer into words as it stands.
+func PopupFlags(c Config, popupStyle, borderStyle string) []string {
+	oneWord := func(style string) string { return strings.Join(strings.Fields(style), ",") }
+	popupStyle, borderStyle = oneWord(popupStyle), oneWord(borderStyle)
+
+	// fill is the popup's own style; edge is the one background its border
+	// cells share with it.
+	fill, edge := "", ""
+	if c.Transparent {
+		fill, edge = "bg=terminal", "bg=terminal"
+	} else if bg, fg := popupGround(c.Theme.Palette); bg != "" {
+		fill, edge = "bg="+bg, "bg="+bg
+		if fg != "" {
+			fill += ",fg=" + fg
+		}
+	}
+	switch {
+	case fill == "" && !c.Borderless:
+		return nil // a palette that leaves its background to the terminal: tmux's own popup
+	case fill == "":
+		if popupStyle == "" {
+			popupStyle = "default"
+		}
+		return []string{"-b", "padded", "-S", popupStyle}
+	case c.Borderless:
+		return []string{"-b", "padded", "-s", fill, "-S", edge}
+	case borderStyle == "":
+		return []string{"-s", fill, "-S", edge}
+	}
+	// The border keeps its lines and colour; only its background follows.
+	return []string{"-s", fill, "-S", borderStyle + "," + edge}
 }

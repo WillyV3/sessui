@@ -515,28 +515,6 @@ func SetPopupWidth(w int) error {
 	return exec.Command("tmux", "set-option", "-g", popupWidthOption, strconv.Itoa(w)).Run()
 }
 
-// popupTransparentOption is the tmux user option sessui.tmux reads to give
-// the popup the terminal's background: "1" on, "0" off.
-const popupTransparentOption = "@sessui-transparent"
-
-// popupBorderlessOption is the tmux user option sessui.tmux reads to swap
-// tmux's popup border for a flush edge: "1" on, "0" off.
-const popupBorderlessOption = "@sessui-borderless"
-
-// SetPopupTransparent stores the choice for the next open.
-func SetPopupTransparent(on bool) error { return setPopupFlag(popupTransparentOption, on) }
-
-// SetPopupBorderless stores the choice for the next open.
-func SetPopupBorderless(on bool) error { return setPopupFlag(popupBorderlessOption, on) }
-
-func setPopupFlag(option string, on bool) error {
-	v := "0"
-	if on {
-		v = "1"
-	}
-	return exec.Command("tmux", "set-option", "-g", option, v).Run()
-}
-
 // Build is the pure parse-and-combine step, split from List so it can be
 // exercised against captured output. It also returns each agent session's
 // pane id, which List uses to target its captures.

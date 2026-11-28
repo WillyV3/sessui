@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -163,8 +164,15 @@ var columnCatalog = map[columnID]column{
 	},
 	colHost: {
 		id: colHost, label: "host", glyph: glyphMachine, width: 12, minWidth: 4,
-		// Blank for a local session: local is the default and needs no label.
-		render: func(c cell) string { return c.styles.Muted.Render(sessionMachine(c.session)) },
+		// A local session names this machine: a column that is blank on every
+		// row until a host is watched reads as broken.
+		render: func(c cell) string {
+			machine := sessionMachine(c.session)
+			if machine == "" {
+				machine = localMachine
+			}
+			return c.styles.Muted.Render(machine)
+		},
 	},
 }
 
@@ -241,6 +249,13 @@ func (c column) String() string {
 
 // Widths are plain ints and exactly one column flexes. A second flex column
 // would need weight-based distribution of the remainder.
+
+// localMachine is this computer's short name, for the host column.
+var localMachine = func() string {
+	name, _ := os.Hostname()
+	short, _, _ := strings.Cut(name, ".")
+	return short
+}()
 
 // sessionMachine is which computer a session is on. A remote session carries
 // its Host; a proxied one is a genuinely local session whose origin lives in

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"runtime/debug"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -36,23 +37,18 @@ func main() {
 	dump := flag.Bool("dump", false, "print rendered session rows as plain text and exit (no TUI)")
 	hosts := flag.Bool("hosts", false, "list ssh hosts and their tmux sessions as plain text and exit (no TUI)")
 	showVersion := flag.Bool("version", false, "print the release version and exit")
-	transparent := flag.Bool("transparent", false, "print 1 if config.json asks for a transparent popup, else 0, and exit (for sessui.tmux)")
-	borderless := flag.Bool("borderless", false, "print 1 if config.json turns tmux's popup border off, else 0, and exit (for sessui.tmux)")
+	popupFlags := flag.Bool("popup-flags", false, "print the display-popup flags config.json asks for, given tmux's popup-style and popup-border-style, and exit (for sessui.tmux)")
 	flag.Parse()
 
 	if *showVersion {
 		fmt.Println(resolvedVersion())
 		return
 	}
-	if *transparent || *borderless {
-		// The same parse sessui itself does, so an unreadable file is solid
-		// and bordered here exactly as it is in the UI.
+	if *popupFlags {
+		// The same parse sessui itself does, so an unreadable file is the
+		// default popup here exactly as it is in the UI.
 		cfg, _ := ui.LoadConfig()
-		if (*transparent && cfg.Transparent) || (*borderless && cfg.Borderless) {
-			fmt.Println(1)
-		} else {
-			fmt.Println(0)
-		}
+		fmt.Println(strings.Join(ui.PopupFlags(cfg, flag.Arg(0), flag.Arg(1)), " "))
 		return
 	}
 	if *dump {

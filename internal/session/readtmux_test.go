@@ -33,12 +33,14 @@ func privateServer(t *testing.T) {
 	t.Cleanup(func() { exec.Command("tmux", "kill-server").Run() })
 }
 
-// The solid popup's edge must get popup-style as tmux expands it. Raw, a
-// popup-style that is a format (bg=#{@thm_bg}) reaches -S unexpanded and the
-// edge is left unstyled; a quote inside such a format broke the shell
-// command. Binds the real sessui.tmux, expands its run-shell command as a
-// keypress would, and reads the argv the shell hands to display-popup.
-func TestPluginPopupEdgeGetsTheExpandedPopupStyle(t *testing.T) {
+// The popup's look is asked of the binary when the key is pressed. It must be
+// handed popup-style and popup-border-style as tmux expands them (raw, a
+// style that is a format, bg=#{@thm_bg}, would be refused by display-popup,
+// and a quote inside such a format broke the shell command), and its answer
+// must reach display-popup as separate flags. Binds the real sessui.tmux,
+// expands its run-shell command as a keypress would, and reads the argv the
+// shell hands to display-popup.
+func TestPluginAsksTheBinaryForThePopupFlags(t *testing.T) {
 	privateServer(t)
 	realTmux, _ := exec.LookPath("tmux")
 	dir := t.TempDir()
@@ -48,7 +50,9 @@ func TestPluginPopupEdgeGetsTheExpandedPopupStyle(t *testing.T) {
 	}
 	files := map[string]string{
 		"sessui.tmux": string(script),
-		"sessui":      "#!/bin/sh\n[ \"$1\" = -transparent ] && echo 0\nexit 0\n",
+		// Answers with what it was handed, or with nothing when $QUIET is set,
+		// as a release from before -popup-flags does.
+		"sessui": "#!/bin/sh\n[ \"$1\" = -popup-flags ] && [ -z \"$QUIET\" ] && echo \"-s popup=$2 -S border=$3\"\nexit 0\n",
 		// Keeps the run-shell command bind-key is given, then binds as usual.
 		"wrap/tmux": "#!/bin/sh\n[ \"$1\" = bind-key ] && for a; do printf %s \"$a\" > \"$BOUND\"; done\nexec " + realTmux + " \"$@\"\n",
 		// Stands in for the tmux the keypress runs: prints its argv.
@@ -71,25 +75,25 @@ func TestPluginPopupEdgeGetsTheExpandedPopupStyle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(tpl), "-b padded") {
+	if !strings.Contains(string(tpl), "-popup-flags") {
 		t.Skipf("tmux before 3.3 binds the popup unstyled: %s", tpl)
 	}
 
-	// press expands the bound command as a keypress would and returns the
-	// argv the shell hands to display-popup.
 	set := func(option, value string) {
 		t.Helper()
 		if out, err := exec.Command("tmux", "set", "-g", option, value).CombinedOutput(); err != nil {
 			t.Fatalf("%s %q: %v: %s", option, value, err, out)
 		}
 	}
-	press := func() ([]string, error) {
+	// press expands the bound command as a keypress would and returns the
+	// argv the shell hands to display-popup.
+	press := func(env ...string) ([]string, error) {
 		cmd, err := exec.Command("tmux", "display-message", "-p", "-t", "probe", string(tpl)).Output()
 		if err != nil {
 			t.Fatal(err)
 		}
 		sh := exec.Command("sh", "-c", strings.TrimSuffix(string(cmd), "\n"))
-		sh.Env = append(os.Environ(), "PATH="+filepath.Join(dir, "argv")+":"+os.Getenv("PATH"))
+		sh.Env = append(append(os.Environ(), "PATH="+filepath.Join(dir, "argv")+":"+os.Getenv("PATH")), env...)
 		out, err := sh.CombinedOutput()
 		if err != nil {
 			return nil, fmt.Errorf("%v: %s", err, out)
@@ -105,14 +109,12 @@ func TestPluginPopupEdgeGetsTheExpandedPopupStyle(t *testing.T) {
 		return "(none)"
 	}
 
-	// Border off: the flush edge takes popup-style, expanded.
 	set("@thm_bg", "colour236")
-	set("@sessui-borderless", "1")
+	set("popup-border-style", "fg=#{@thm_bg}")
 	for style, want := range map[string]string{
 		"bg=#1e1e2e,fg=#cdd6f4":          "bg=#1e1e2e,fg=#cdd6f4",
 		"bg=#{@thm_bg},fg=colour250":     "bg=colour236,fg=colour250",
 		"bg=#{?#{==:a,'},red,colour236}": "bg=colour236",
-		"fg=red bg=blue":                 "fg=red bg=blue",
 	} {
 		set("popup-style", style)
 		args, err := press()
@@ -120,31 +122,21 @@ func TestPluginPopupEdgeGetsTheExpandedPopupStyle(t *testing.T) {
 			t.Errorf("popup-style %q: the keypress command failed: %v", style, err)
 			continue
 		}
-		if got := flag(args, "-S"); got != want || flag(args, "-b") != "padded" {
-			t.Errorf("popup-style %q: edge got -b %q -S %q, want padded and %q", style, flag(args, "-b"), got, want)
+		if s, S := flag(args, "-s"), flag(args, "-S"); s != "popup="+want || S != "border=fg=colour236" {
+			t.Errorf("popup-style %q: display-popup got -s %q -S %q", style, s, S)
+		}
+		if args[len(args)-1] != filepath.Join(dir, "sessui") {
+			t.Errorf("popup-style %q: the popup does not run the binary: %q", style, args)
 		}
 	}
 
-	// Border on, the default: tmux's own popup, nothing styled from here.
-	set("@sessui-borderless", "0")
-	set("popup-border-style", "fg=#{@thm_bg},bg=colour236")
-	args, err := press()
+	// A binary that answers nothing leaves tmux's own popup, and still opens.
+	args, err := press("QUIET=1")
 	if err != nil {
-		t.Fatalf("border on: the keypress command failed: %v", err)
+		t.Fatalf("a silent binary: the keypress command failed: %v", err)
 	}
-	for _, name := range []string{"-b", "-s", "-S"} {
-		if got := flag(args, name); got != "(none)" {
-			t.Errorf("border on, solid: display-popup got %s %q, want tmux's own", name, got)
-		}
-	}
-	// Transparent with the border on: the border keeps its style and only
-	// its background becomes the terminal's.
-	set("@sessui-transparent", "1")
-	if args, err = press(); err != nil {
-		t.Fatalf("border on, transparent: the keypress command failed: %v", err)
-	}
-	if b, s, S := flag(args, "-b"), flag(args, "-s"), flag(args, "-S"); b != "(none)" || s != "bg=terminal" || S != "fg=colour236,bg=colour236,bg=terminal" {
-		t.Errorf("border on, transparent: got -b %q -s %q -S %q", b, s, S)
+	if s, S := flag(args, "-s"), flag(args, "-S"); s != "(none)" || S != "(none)" || args[0] != "display-popup" {
+		t.Errorf("a silent binary: display-popup got %q", args)
 	}
 }
 

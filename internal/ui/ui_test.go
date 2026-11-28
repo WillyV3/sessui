@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -427,32 +426,16 @@ func TestTransparentPersistsAndOldConfigsAreUntouched(t *testing.T) {
 	}
 }
 
-// A save that fails leaves tmux as it was: the plugin reads the file at its
-// next load, so setting the option for an unsaved choice would flip back.
-// Runs a private tmux server on TestMain's socket directory.
-func TestFailedSaveLeavesTheTmuxSettingAlone(t *testing.T) {
-	if err := exec.Command("tmux", "-f", "/dev/null", "new-session", "-d", "-s", "probe").Run(); err != nil {
-		t.Skipf("no tmux server: %v", err)
-	}
-	t.Cleanup(func() { exec.Command("tmux", "kill-server").Run() })
-	options := func() string {
-		var got []string
-		for _, name := range []string{"@sessui-transparent", "@sessui-borderless"} {
-			out, _ := exec.Command("tmux", "show-option", "-gqv", name).Output()
-			got = append(got, strings.TrimSpace(string(out)))
-		}
-		return strings.Join(got, " ")
-	}
-
+// A save that fails keeps what the file still has: fill and border do nothing
+// in this session, so ctrl+e must reopen on the truth, not on the unsaved
+// choice.
+func TestFailedSaveKeepsTheSavedPopupLook(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	m := New()
 	apply := func(on bool) {
 		m, _ = send(m, editorAppliedMsg{columns: m.columns, popupWidth: popupWidthDefault, transparent: on, borderless: on, theme: m.cfg.Theme, icons: m.cfg.Icons, hosts: m.cfg.Hosts})
 	}
 	apply(true)
-	if got := options(); got != "1 1" {
-		t.Fatalf("a saved apply set the options to %q", got)
-	}
 
 	// A file where the config directory should be: the save fails.
 	blocked := filepath.Join(t.TempDir(), "not-a-dir")
@@ -464,11 +447,66 @@ func TestFailedSaveLeavesTheTmuxSettingAlone(t *testing.T) {
 	if m.err == nil {
 		t.Fatal("the save did not fail")
 	}
-	if got := options(); got != "1 1" {
-		t.Errorf("a failed save changed the options to %q", got)
-	}
 	if !m.cfg.Transparent || !m.cfg.Borderless {
 		t.Error("a failed save left the unsaved choice for ctrl+e to reopen on")
+	}
+}
+
+// What display-popup is told for each fill and border. Solid is the palette's
+// own background, which is what makes a light palette readable on a dark
+// terminal; a palette with no background of its own leaves the popup to tmux.
+func TestPopupFlags(t *testing.T) {
+	t.Setenv("PATH", t.TempDir()) // auto without Omarchy: the terminal palette
+	light, dark := builtinPalettes[paletteLight], builtinPalettes[paletteDark]
+	cfg := func(p paletteSource, transparent, borderless bool) Config {
+		return Config{Theme: ThemeConfig{Palette: p}, Transparent: transparent, Borderless: borderless}
+	}
+	for _, tc := range []struct {
+		name   string
+		cfg    Config
+		border string
+		want   string
+	}{
+		{"solid light keeps the border", cfg(paletteLight, false, false), "fg=#8bcbb1",
+			fmt.Sprintf("-s bg=%s,fg=%s -S fg=#8bcbb1,bg=%s", light.Background, light.Foreground, light.Background)},
+		{"solid dark, no border style", cfg(paletteDark, false, false), "",
+			fmt.Sprintf("-s bg=%s,fg=%s -S bg=%s", dark.Background, dark.Foreground, dark.Background)},
+		{"solid light, flush edge", cfg(paletteLight, false, true), "fg=#8bcbb1",
+			fmt.Sprintf("-b padded -s bg=%s,fg=%s -S bg=%s", light.Background, light.Foreground, light.Background)},
+		{"transparent keeps the border", cfg(paletteLight, true, false), "fg=red bg=blue",
+			"-s bg=terminal -S fg=red,bg=blue,bg=terminal"},
+		{"transparent, flush edge", cfg(paletteDark, true, true), "fg=red",
+			"-b padded -s bg=terminal -S bg=terminal"},
+		{"terminal palette is tmux's own popup", cfg(paletteTerminal, false, false), "fg=red", ""},
+		{"auto without Omarchy is tmux's own popup", cfg(paletteAuto, false, false), "fg=red", ""},
+		{"terminal palette, flush edge in popup-style", cfg(paletteTerminal, false, true), "fg=red",
+			"-b padded -S bg=colour236,fg=white"},
+	} {
+		got := strings.Join(PopupFlags(tc.cfg, "bg=colour236 fg=white", tc.border), " ")
+		if got != tc.want {
+			t.Errorf("%s:\n got  %q\n want %q", tc.name, got, tc.want)
+		}
+		if strings.Contains(strings.Join(PopupFlags(tc.cfg, "bg=colour236 fg=white", tc.border), "\x00"), " ") {
+			t.Errorf("%s: a flag carries a space, and the shell splits on those: %q", tc.name, got)
+		}
+	}
+	if got := PopupFlags(cfg(paletteTerminal, false, true), "", ""); !slices.Equal(got, []string{"-b", "padded", "-S", "default"}) {
+		t.Errorf("flush edge with no popup-style: %q", got)
+	}
+}
+
+// The host column names this machine for a local session, so it is never a
+// column of blanks, and a remote session's own host still wins.
+func TestHostColumnNamesTheLocalMachine(t *testing.T) {
+	_, styles := restyle(ThemeConfig{Palette: paletteDark}, glyphsASCII)
+	render := func(s session.Session) string {
+		return ansi.Strip(columnCatalog[colHost].render(cell{session: s, styles: styles}))
+	}
+	if got := render(session.Session{Name: "work"}); got == "" || got != localMachine {
+		t.Errorf("a local session's host cell is %q, want %q", got, localMachine)
+	}
+	if got := render(session.Session{Name: "work", Host: "box"}); got != "box" {
+		t.Errorf("a remote session's host cell is %q", got)
 	}
 }
 

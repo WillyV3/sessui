@@ -58,8 +58,8 @@ type editorAppliedMsg struct {
 	icons      glyphSet
 	hosts      []string
 
-	// transparent and borderless are saved and set as @sessui-transparent
-	// and @sessui-borderless; next open too.
+	// transparent and borderless are saved for sessui.tmux to read at the
+	// next open.
 	transparent bool
 	borderless  bool
 }
@@ -320,18 +320,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if err := SaveConfig(m.cfg); err != nil {
 			m.err = err
 			// Unlike hosts, these do nothing in this session: keep what the file
-			// and tmux still have, so ctrl+e reopens on the truth.
+			// still has, so ctrl+e reopens on the truth.
 			m.cfg.Transparent, m.cfg.Borderless = savedFill, savedBorder
 		} else {
 			m.configErr = nil // a good write replaces whatever failed to parse
-			// Only a saved choice reaches tmux: the plugin reads the file at
-			// its next load, so an unsaved one would flip back there.
-			if err := session.SetPopupTransparent(msg.transparent); err != nil {
-				m.err = err
-			}
-			if err := session.SetPopupBorderless(msg.borderless); err != nil {
-				m.err = err
-			}
 		}
 		if err := session.SetPopupWidth(msg.popupWidth); err != nil {
 			m.err = err

@@ -174,6 +174,21 @@ func loadPalette(source paletteSource) Palette {
 	}
 }
 
+// popupGround is a palette's background and foreground, for the popup's fill.
+// It is asked at every open, so on Omarchy it costs two colour queries, not
+// the eleven of loadPalette. Empty means the terminal's own.
+func popupGround(source paletteSource) (bg, fg string) {
+	if p, pinned := builtinPalettes[source]; pinned {
+		return string(p.Background), string(p.Foreground)
+	}
+	if !omarchyThemeAvailable() {
+		return "", ""
+	}
+	bg, _ = themeColorQuery("background")
+	fg, _ = themeColorQuery("foreground")
+	return bg, fg
+}
+
 // Styles bundles the lipgloss styles used across the list, footer and
 // prompts, built once from the Palette.
 type Styles struct {

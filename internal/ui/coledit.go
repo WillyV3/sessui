@@ -176,7 +176,8 @@ type columnEditor struct {
 	width      int
 	popupWidth int
 	// transparent is the popup fill being set for the NEXT open, like
-	// popupWidth: the popup you are looking at cannot restyle itself.
+	// popupWidth: tmux draws it, and the popup you are looking at cannot
+	// restyle itself.
 	transparent bool
 	// borderless swaps tmux's popup border for a flush edge; next open too.
 	borderless bool
@@ -689,14 +690,14 @@ func (e *columnEditor) renderWidthRow(width int) string {
 	return e.controlRow("popup", e.valueCell(fmt.Sprintf("%d cols", e.popupWidth), e.row == rowWidth), hint, width)
 }
 
-// renderFillRow is the popup's background: tmux's popup-style, or the
-// terminal's own, so a wallpaper or blur shows through.
+// renderFillRow is the popup's background: the palette's, or the terminal's
+// own, so a wallpaper or blur shows through.
 func (e *columnEditor) renderFillRow(width int) string {
 	value := "solid"
 	if e.transparent {
 		value = "transparent"
 	}
-	hint := "transparent shows the terminal · " + nextOpenHint + tpmOnlyHint
+	hint := "the theme's background, or the terminal's · " + nextOpenHint
 	return e.controlRow("fill", e.valueCell(value, e.row == rowFill), hint, width)
 }
 
@@ -707,16 +708,13 @@ func (e *columnEditor) renderBorderRow(width int) string {
 	if e.borderless {
 		value = "off"
 	}
-	hint := "tmux's border · off for a flush edge · " + nextOpenHint + tpmOnlyHint
+	hint := "tmux's popup border · off for a flush edge · " + nextOpenHint
 	return e.controlRow("border", e.valueCell(value, e.row == rowBorder), hint, width)
 }
 
 // The popup cannot resize or restyle itself, so these rows say when the
-// choice shows. Fill and border are only read by the TPM binding.
-const (
-	nextOpenHint = "applies next time you open sessui"
-	tpmOnlyHint  = " (TPM, tmux 3.3+)"
-)
+// choice shows.
+const nextOpenHint = "applies next time you open sessui"
 
 func (e *columnEditor) renderThemeRow(width int) string {
 	hint := "palette · auto is the Omarchy theme, or your terminal's colours · ←→ to change"

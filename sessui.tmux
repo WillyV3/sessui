@@ -7,10 +7,6 @@
 #   set -g @sessui-key    's'     # prefix + <key> opens it   (default: s)
 #   set -g @sessui-width  '112'   # popup width               (default: 112 -- the table needs ~112)
 #   set -g @sessui-height '26'    # popup height              (default: 26)
-#
-# @sessui-transparent and @sessui-borderless are not among these: sessui sets
-# them from config.json at every load and on a ctrl+e apply, so a value set
-# here is overwritten.
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -94,39 +90,29 @@ width="$(smaller '#{client_width}' '#{?@sessui-width,#{@sessui-width},112}')"
 # there sessui does not open remote sessions: see nested() in remote.go.
 nested='#{?#{m:tmux*,#{client_termtype}},1,}'
 #
-# The popup has tmux's own border and style unless ctrl+e says otherwise:
+# How the popup is filled and edged is chosen in ctrl+e and kept in
+# config.json:
 #
-#   fill transparent   the fill takes the terminal's background, and so does
-#                      the border's, which keeps its lines and colour
-#   border off         the border is blank cells in the popup's own style
-#                      (padded), so a solid popup is one flush block: a drawn
-#                      line sits mid-cell, where a fill can only stop short of
-#                      it or run past it
+#   fill solid         the palette's background, so a light palette is
+#                      readable on a dark terminal (the default)
+#   fill transparent   the terminal's background
+#   border on          tmux's own popup border, on the fill's background (the
+#                      default)
+#   border off         blank cells in the fill's style (padded), so the popup
+#                      is one flush block
 #
-# Both choices are kept in config.json. tmux needs them before the binary
-# runs, so they are copied into @sessui-transparent and @sessui-borderless
-# here (applying ctrl+e sets them too) and read at OPEN time, like the width.
+# tmux draws all of it and has to be told before the UI starts, so the binary
+# is asked when the key is pressed: it reads config.json the way sessui does
+# and prints the display-popup flags, and the shell splices them in. Nothing
+# is copied anywhere, so a change in ctrl+e or by hand shows at the next open.
+# It is handed tmux's popup-style and popup-border-style, expanded (E:), which
+# only tmux knows. A binary without -popup-flags (an older release) prints
+# nothing, which is tmux's own popup.
 #
-# The binary reads config.json the way sessui does and prints 1 or 0, so the
-# file decides and no JSON tool is needed here. One without the flag (an older
-# release) prints nothing, which reads as off. Only here and on a ctrl+e
-# apply: a hand edit of config.json waits for a tmux.conf reload.
-for setting in transparent borderless; do
-	if [ "$("$BIN" "-$setting" 2>/dev/null)" = 1 ]; then
-		tmux set-option -g "@sessui-$setting" 1
-	else
-		tmux set-option -g "@sessui-$setting" 0
-	fi
-done
 # display-popup -b, -s and -S are tmux 3.3+: before that the popup is bound
 # exactly as it always was.
 style=""
 if printf '%s\n' "$tmux_version" | awk -F. '{ exit !($1 > 3 || ($1 == 3 && $2 >= 3)) }'; then
-	# E: expands a style that is itself a format (bg=#{@thm_bg}); the raw text
-	# would reach -S unexpanded and be refused. #, is a comma that does not
-	# end the branch it is in.
-	flush="-b padded #{?@sessui-transparent,-s bg=terminal -S bg=terminal,-S '#{E:popup-style}'}"
-	bordered="#{?@sessui-transparent,-s bg=terminal -S '#{E:popup-border-style}#,bg=terminal',}"
-	style="#{?@sessui-borderless,$flush,$bordered} "
+	style="\$('$BIN' -popup-flags '#{E:popup-style}' '#{E:popup-border-style}' 2>/dev/null) "
 fi
 tmux bind-key "$key" run-shell "tmux display-popup -E ${style}-e 'SESSUI_NESTED=$nested' -w '$width' -h '$(smaller '#{client_height}' "$height")' '$BIN'"

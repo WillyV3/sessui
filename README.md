@@ -118,30 +118,29 @@ Everything else is `~/.config/sessui/config.json`, written for you by `ctrl+e`:
 |-----|--------|--|
 | `icons` | `nerd` \| `ascii` | `ascii` for terminals without a Nerd Font |
 | `theme.palette` | `auto` \| `terminal` \| `dark` \| `light` | `auto` follows the [Omarchy](https://omarchy.org) theme where there is one, and is `terminal` everywhere else: your terminal's own sixteen colours, so it matches any terminal theme |
-| `transparent` | `false` \| `true` | the popup takes the terminal's background (wallpaper, blur) instead of tmux's `popup-style`; next open (TPM popup, see below) |
+| `transparent` | `false` \| `true` | the popup takes the terminal's background (wallpaper, blur) instead of the palette's; next open (TPM popup, see below) |
 | `borderless` | `false` \| `true` | a flush edge instead of tmux's popup border; next open (TPM popup, see below) |
 | `columns` | `[{"id","width"}]` | which columns, in what order |
 | `hosts` | `["alias"]` | machines to watch |
 
-The TPM popup looks like any other tmux popup: your `popup-border-lines`,
-`popup-border-style` and `popup-style`. Two rows in `ctrl+e` change that, and
-both show the next time you open sessui:
+The TPM popup is filled with the palette's background, inside your own tmux
+popup border (`popup-border-lines`, `popup-border-style`). Two rows in `ctrl+e`
+change that, and both show the next time you open sessui:
 
-- **fill** `transparent` gives the fill the terminal's background. The border
-  keeps its lines and colour.
-- **border** `off` replaces the border with a row of blank cells in the popup's
-  own style, so a solid popup is one flush block. A drawn line sits in the
-  middle of its cell, so a fill could only stop short of it or run past it.
+- **fill** `solid` is the palette's background, so a `light` palette is
+  readable on a dark terminal. `transparent` is the terminal's background
+  instead. The `terminal` palette has no background of its own, so there the
+  fill is tmux's `popup-style`.
+- **border** `off` replaces the border with a row of blank cells in the fill's
+  style, so the popup is one flush block. A drawn line sits in the middle of
+  its cell, so a fill could only stop short of it or run past it.
 
 Both need tmux 3.3+ (`display-popup -b`, `-s`, `-S`). Before that, the popup is
 bound exactly as before. A binding of your own doesn't get either, so these
 two rows only work with the TPM popup.
 
-tmux reads them through `@sessui-transparent` and `@sessui-borderless`. sessui
-manages those options: it copies them from `config.json` when the plugin loads
-and when `ctrl+e` applies, and a value you set yourself is overwritten. If you
-edit `config.json` by hand (or a dotfiles sync does), reload your tmux.conf
-before the change shows.
+`config.json` is read each time the popup opens, so a change made by hand (or
+by a dotfiles sync) shows at the next open too.
 
 ## When an agent needs you
 
