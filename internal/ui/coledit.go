@@ -78,7 +78,7 @@ const (
 )
 
 // palettes is the ←→ cycle order on the theme row.
-var palettes = []paletteSource{paletteAuto, paletteDark, paletteLight}
+var palettes = []paletteSource{paletteAuto, paletteTerminal, paletteDark, paletteLight}
 
 func cyclePalette(cur paletteSource, delta int) paletteSource {
 	i := slices.Index(palettes, cur)
@@ -719,7 +719,7 @@ const (
 )
 
 func (e *columnEditor) renderThemeRow(width int) string {
-	hint := "palette · auto follows the Omarchy theme, else dark · ←→ to change"
+	hint := "palette · auto is the Omarchy theme, or your terminal's colours · ←→ to change"
 	return e.controlRow("theme", e.valueCell(string(e.theme.Palette), e.row == rowTheme), hint, width)
 }
 

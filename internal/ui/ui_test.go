@@ -632,3 +632,32 @@ func TestActionErrorOutlivesAReload(t *testing.T) {
 		t.Error("the reason outlived the next key press")
 	}
 }
+
+// Without Omarchy, auto is the terminal's own colours: colour numbers the
+// terminal resolves, never hex. A chip there has no background colour to name
+// for its text, so it is drawn in reverse video, and the selection background
+// is a colour number too.
+func TestAutoIsTheTerminalPaletteWithoutOmarchy(t *testing.T) {
+	t.Setenv("PATH", t.TempDir()) // no omarchy-theme-color to find
+	p := loadPalette(paletteAuto)
+	if p != builtinPalettes[paletteTerminal] {
+		t.Fatalf("auto without Omarchy is %+v", p)
+	}
+	for _, name := range p.slotNames() {
+		if c, _ := p.slot(name); strings.HasPrefix(string(c), "#") {
+			t.Errorf("slot %s is the fixed colour %s", name, c)
+		}
+	}
+	if !p.chip(p.Red).GetReverse() {
+		t.Error("a chip on the terminal palette is not reverse video")
+	}
+	if builtinPalettes[paletteDark].chip("#F38BA8").GetReverse() {
+		t.Error("a chip on a hex palette became reverse video")
+	}
+	if got := bgSGR(p.Muted); got != "\x1b[48;5;8m" {
+		t.Errorf("selection background is %q", got)
+	}
+	if !slices.Contains(palettes, paletteTerminal) {
+		t.Error("terminal is not a choice on the theme row")
+	}
+}

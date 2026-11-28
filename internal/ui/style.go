@@ -86,18 +86,29 @@ func (p Palette) slot(name slotName) (lipgloss.Color, bool) {
 }
 
 // paletteSource is the user-facing theme setting: "auto" follows the Omarchy
-// theme when the box has one and falls back to the built-in dark palette;
-// "dark"/"light" pin a built-in regardless.
+// theme when the box has one and is the terminal's own colours everywhere
+// else; "terminal"/"dark"/"light" pin a built-in regardless.
 type paletteSource string
 
 const (
-	paletteAuto  paletteSource = "auto"
-	paletteDark  paletteSource = "dark"
-	paletteLight paletteSource = "light"
+	paletteAuto     paletteSource = "auto"
+	paletteTerminal paletteSource = "terminal"
+	paletteDark     paletteSource = "dark"
+	paletteLight    paletteSource = "light"
 )
 
-// builtinPalettes need no theme tooling: Catppuccin Mocha and Latte.
+// builtinPalettes need no theme tooling: the terminal's own sixteen colours,
+// then Catppuccin Mocha and Latte.
 var builtinPalettes = map[paletteSource]Palette{
+	// Colour numbers, not hex: the terminal resolves them, so this follows
+	// whatever theme it has, light or dark, on any OS, with nothing to detect.
+	// Empty is the terminal's default foreground or background. There is no
+	// ANSI orange; bright yellow stands in.
+	paletteTerminal: {
+		Accent: "4", Background: "", Foreground: "", Muted: "8",
+		Red: "1", Green: "2", Yellow: "3", Blue: "4",
+		Magenta: "5", Cyan: "6", Orange: "11",
+	},
 	paletteDark: {
 		Accent: "#00AFFF", Background: "#1E1E2E", Foreground: "#CDD6F4", Muted: "#6C7086",
 		Red: "#F38BA8", Green: "#A6E3A1", Yellow: "#F9E2AF", Blue: "#89B4FA",
@@ -131,13 +142,14 @@ func omarchyThemeAvailable() bool {
 }
 
 // loadPalette resolves the palette for a source. "auto" follows Omarchy when
-// available; a slot Omarchy fails to answer falls back individually, so a
-// partial theme degrades per colour. A pinned source never shells out.
+// available and is the terminal's colours otherwise; a slot Omarchy fails to
+// answer falls back individually, so a partial theme degrades per colour. A
+// pinned source never shells out.
 func loadPalette(source paletteSource) Palette {
 	if p, pinned := builtinPalettes[source]; pinned {
 		return p
 	}
-	base := builtinPalettes[paletteDark]
+	base := builtinPalettes[paletteTerminal]
 	if !omarchyThemeAvailable() {
 		return base
 	}
@@ -198,8 +210,22 @@ type Styles struct {
 	selectedBG string
 }
 
-// bgSGR builds a truecolor background escape from a "#rrggbb" colour, or "".
+// chip is text on a block of colour: the block in bg, the text in the
+// palette's background. A palette that leaves its background to the terminal
+// has no such colour to name, so reverse video draws the same thing.
+func (p Palette) chip(bg lipgloss.Color) lipgloss.Style {
+	if p.Background == "" {
+		return lipgloss.NewStyle().Foreground(bg).Reverse(true)
+	}
+	return lipgloss.NewStyle().Background(bg).Foreground(p.Background)
+}
+
+// bgSGR builds a background escape from a "#rrggbb" colour or a terminal
+// colour number, or "".
 func bgSGR(c lipgloss.Color) string {
+	if n, err := strconv.Atoi(string(c)); err == nil && n >= 0 && n <= 255 {
+		return fmt.Sprintf("\x1b[48;5;%dm", n)
+	}
 	hex := strings.TrimPrefix(string(c), "#")
 	if len(hex) != 6 {
 		return ""
@@ -311,8 +337,8 @@ func newStyles(p Palette, roles map[role]slotName) Styles {
 		PeerUp:       lipgloss.NewStyle().Foreground(c(rolePeerUp)),
 		PeerDown:     lipgloss.NewStyle().Foreground(c(rolePeerDown)),
 		Mail:         lipgloss.NewStyle().Foreground(p.Yellow),
-		NeedsYouPill: lipgloss.NewStyle().Bold(true).Background(c(roleNeedsYou)).Foreground(p.Background).Padding(0, 1),
-		MailPill:     lipgloss.NewStyle().Bold(true).Background(c(roleMail)).Foreground(p.Background).Padding(0, 1),
+		NeedsYouPill: p.chip(c(roleNeedsYou)).Bold(true).Padding(0, 1),
+		MailPill:     p.chip(c(roleMail)).Bold(true).Padding(0, 1),
 		activeFresh:  lipgloss.NewStyle().Foreground(p.Green),
 		activeRecent: lipgloss.NewStyle().Foreground(p.Cyan),
 		activeToday:  lipgloss.NewStyle().Foreground(p.Yellow),
@@ -323,7 +349,7 @@ func newStyles(p Palette, roles map[role]slotName) Styles {
 // themedListStyles retunes bubbles/list's default styling onto the palette.
 func themedListStyles(p Palette) list.Styles {
 	s := list.DefaultStyles()
-	s.Title = lipgloss.NewStyle().Bold(true).Foreground(p.Background).Background(p.Accent).Padding(0, 1)
+	s.Title = p.chip(p.Accent).Bold(true).Padding(0, 1)
 	s.FilterPrompt = lipgloss.NewStyle().Foreground(p.Accent)
 	s.FilterCursor = lipgloss.NewStyle().Foreground(p.Accent)
 	s.StatusBar = lipgloss.NewStyle().Foreground(p.Muted).Padding(0, 0, 1, 2)

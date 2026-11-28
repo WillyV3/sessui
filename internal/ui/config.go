@@ -36,8 +36,8 @@ type Config struct {
 
 // ThemeConfig is how the palette is chosen and, optionally, recoloured.
 type ThemeConfig struct {
-	// Palette is "auto" (Omarchy's theme when present, else dark), or a
-	// pinned built-in: "dark" | "light".
+	// Palette is "auto" (Omarchy's theme when present, else the terminal's), or a
+	// pinned built-in: "terminal" | "dark" | "light".
 	Palette paletteSource `json:"palette,omitempty"`
 	// Roles remaps a UI role ("needs-you") to a Palette slot ("blue"). Never
 	// raw hex: a slot is resolved against whatever Palette is live, so the

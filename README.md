@@ -117,7 +117,7 @@ Everything else is `~/.config/sessui/config.json`, written for you by `ctrl+e`:
 | Key | Values | |
 |-----|--------|--|
 | `icons` | `nerd` \| `ascii` | `ascii` for terminals without a Nerd Font |
-| `theme.palette` | `auto` \| `dark` \| `light` | `auto` follows [Omarchy](https://omarchy.org) |
+| `theme.palette` | `auto` \| `terminal` \| `dark` \| `light` | `auto` follows the [Omarchy](https://omarchy.org) theme where there is one, and is `terminal` everywhere else: your terminal's own sixteen colours, so it matches any terminal theme |
 | `transparent` | `false` \| `true` | the popup takes the terminal's background (wallpaper, blur) instead of tmux's `popup-style`; next open (TPM popup, see below) |
 | `borderless` | `false` \| `true` | a flush edge instead of tmux's popup border; next open (TPM popup, see below) |
 | `columns` | `[{"id","width"}]` | which columns, in what order |
