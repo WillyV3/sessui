@@ -4,11 +4,13 @@ package ui
 // across the same header the table draws, and the real table redraws live
 // underneath every edit. Nothing here is a mockup of the table.
 //
-// Six rows, one cursor axis each:
+// Eight rows, one cursor axis each:
 //
 //	strip   the visible columns, laid out exactly as the preview below them
 //	shelf   the hidden columns as chips -- what you can add
 //	width   the popup's width, applied on the next open
+//	fill    the popup's background (solid / transparent), next open
+//	border  tmux's popup border (on / off), next open
 //	theme   the palette source (auto / dark / light)
 //	icons   the glyph set (nerd / ascii)
 //	hosts   the machines whose sessions the list shows
@@ -68,6 +70,7 @@ const (
 	rowShelf
 	rowWidth
 	rowFill
+	rowBorder
 	rowTheme
 	rowIcons
 	rowHosts
@@ -175,6 +178,8 @@ type columnEditor struct {
 	// transparent is the popup fill being set for the NEXT open, like
 	// popupWidth: the popup you are looking at cannot restyle itself.
 	transparent bool
+	// borderless swaps tmux's popup border for a flush edge; next open too.
+	borderless bool
 
 	row         editorRow
 	cursor      int  // index into order; on a visible entry while row == rowStrip
@@ -204,9 +209,9 @@ func (e *columnEditor) withTheme(t ThemeConfig, g glyphSet, restyle func(ThemeCo
 	return e
 }
 
-// withTransparent seats the editor on the saved popup fill.
-func (e *columnEditor) withTransparent(on bool) *columnEditor {
-	e.transparent = on
+// withPopupLook seats the editor on the saved popup fill and border.
+func (e *columnEditor) withPopupLook(transparent, borderless bool) *columnEditor {
+	e.transparent, e.borderless = transparent, borderless
 	return e
 }
 
@@ -377,6 +382,8 @@ func (e *columnEditor) move(delta int) {
 		e.adjustWidth(delta)
 	case rowFill:
 		e.transparent = !e.transparent
+	case rowBorder:
+		e.borderless = !e.borderless
 	case rowTheme:
 		e.theme.Palette = cyclePalette(e.theme.Palette, delta)
 		e.tint()
@@ -511,7 +518,7 @@ func (e *columnEditor) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		e.resize(-1)
 	case "ctrl+r":
 		e.reset(defaultColumnSettings())
-		e.popupWidth, e.transparent = popupWidthDefault, false
+		e.popupWidth, e.transparent, e.borderless = popupWidthDefault, false, false
 		e.theme.Palette, e.icons = paletteAuto, glyphsNerd
 		e.tint()
 	case "ctrl+z":
@@ -542,7 +549,7 @@ func (e *columnEditor) result() (finished bool, apply tea.Cmd) {
 	if e.abandoned {
 		return true, nil
 	}
-	msg := editorAppliedMsg{columns: e.Result(), popupWidth: e.popupWidth, transparent: e.transparent, theme: e.theme, icons: e.icons, hosts: e.hostResult()}
+	msg := editorAppliedMsg{columns: e.Result(), popupWidth: e.popupWidth, transparent: e.transparent, borderless: e.borderless, theme: e.theme, icons: e.icons, hosts: e.hostResult()}
 	return true, func() tea.Msg { return msg }
 }
 
@@ -568,7 +575,7 @@ func (e *columnEditor) ShortHelp() []key.Binding {
 	case rowWidth:
 		resize.SetHelp("+/-", "adjust")
 		bindings = []key.Binding{rows, resize}
-	case rowFill, rowTheme, rowIcons:
+	case rowFill, rowBorder, rowTheme, rowIcons:
 		move.SetHelp("←→", "choose")
 		bindings = []key.Binding{rows, move}
 	}
@@ -675,9 +682,9 @@ func (e *columnEditor) renderShelf(width int) string {
 // next to a column editor reads as a column. The popup you are looking at
 // cannot resize itself, and the hint says so.
 func (e *columnEditor) renderWidthRow(width int) string {
-	hint := "tmux popup width · +/- to change · takes effect next open"
+	hint := "tmux popup width · +/- to change · " + nextOpenHint
 	if e.popupWidth != popupWidthDefault {
-		hint = fmt.Sprintf("tmux popup width · default %d · takes effect next open", popupWidthDefault)
+		hint = fmt.Sprintf("tmux popup width · default %d · ", popupWidthDefault) + nextOpenHint
 	}
 	return e.controlRow("popup", e.valueCell(fmt.Sprintf("%d cols", e.popupWidth), e.row == rowWidth), hint, width)
 }
@@ -689,9 +696,27 @@ func (e *columnEditor) renderFillRow(width int) string {
 	if e.transparent {
 		value = "transparent"
 	}
-	hint := "popup background · transparent shows the terminal · next open, TPM popup on tmux 3.3+"
+	hint := "transparent shows the terminal · " + nextOpenHint + tpmOnlyHint
 	return e.controlRow("fill", e.valueCell(value, e.row == rowFill), hint, width)
 }
+
+// renderBorderRow is tmux's own popup border, or a flush edge of blank cells
+// in its place.
+func (e *columnEditor) renderBorderRow(width int) string {
+	value := "on"
+	if e.borderless {
+		value = "off"
+	}
+	hint := "tmux's border · off for a flush edge · " + nextOpenHint + tpmOnlyHint
+	return e.controlRow("border", e.valueCell(value, e.row == rowBorder), hint, width)
+}
+
+// The popup cannot resize or restyle itself, so these rows say when the
+// choice shows. Fill and border are only read by the TPM binding.
+const (
+	nextOpenHint = "applies next time you open sessui"
+	tpmOnlyHint  = " (TPM, tmux 3.3+)"
+)
 
 func (e *columnEditor) renderThemeRow(width int) string {
 	hint := "palette · auto follows the Omarchy theme, else dark · ←→ to change"
@@ -723,7 +748,7 @@ func padRight(left, right string, width int) string {
 }
 
 // View renders the editor at the current window width: a title band with
-// the help line, the seven rows, a blank line, then the live preview in the
+// the help line, the eight rows, a blank line, then the live preview in the
 // editor's current styles, so a theme choice is seen before it is applied.
 func (e *columnEditor) View() string {
 	width := e.width
@@ -738,6 +763,7 @@ func (e *columnEditor) View() string {
 		e.renderShelf(width),
 		e.renderWidthRow(width),
 		e.renderFillRow(width),
+		e.renderBorderRow(width),
 		e.renderThemeRow(width),
 		e.renderIconsRow(width),
 		e.renderHostsRow(width),

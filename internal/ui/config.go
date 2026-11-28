@@ -28,6 +28,10 @@ type Config struct {
 	// starts, so sessui.tmux copies it into @sessui-transparent at load, and
 	// applying the editor sets that option too.
 	Transparent bool `json:"transparent,omitempty"`
+	// Borderless swaps tmux's own popup border for a flush edge of blank
+	// cells. Off by default, so the popup looks like every other tmux popup.
+	// It reaches tmux the way Transparent does, as @sessui-borderless.
+	Borderless bool `json:"borderless,omitempty"`
 }
 
 // ThemeConfig is how the palette is chosen and, optionally, recoloured.

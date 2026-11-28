@@ -58,8 +58,10 @@ type editorAppliedMsg struct {
 	icons      glyphSet
 	hosts      []string
 
-	// transparent is saved and set as @sessui-transparent; next open too.
+	// transparent and borderless are saved and set as @sessui-transparent
+	// and @sessui-borderless; next open too.
 	transparent bool
+	borderless  bool
 }
 
 // restyle applies a theme choice process-wide -- the glyph set, the icon
@@ -312,19 +314,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// A newly watched host must show its sessions now, not on the next
 		// poll; the editor just probed them, so the reload is a cache read.
 		hostsChanged := !slices.Equal(m.cfg.Hosts, msg.hosts)
-		saved := m.cfg.Transparent
-		m.cfg.Hosts, m.cfg.Transparent = msg.hosts, msg.transparent
+		savedFill, savedBorder := m.cfg.Transparent, m.cfg.Borderless
+		m.cfg.Hosts, m.cfg.Transparent, m.cfg.Borderless = msg.hosts, msg.transparent, msg.borderless
 		m.retheme(msg.theme, msg.icons)
 		if err := SaveConfig(m.cfg); err != nil {
 			m.err = err
-			// Unlike hosts, it does nothing in this session: keep what the file
+			// Unlike hosts, these do nothing in this session: keep what the file
 			// and tmux still have, so ctrl+e reopens on the truth.
-			m.cfg.Transparent = saved
+			m.cfg.Transparent, m.cfg.Borderless = savedFill, savedBorder
 		} else {
 			m.configErr = nil // a good write replaces whatever failed to parse
 			// Only a saved choice reaches tmux: the plugin reads the file at
 			// its next load, so an unsaved one would flip back there.
 			if err := session.SetPopupTransparent(msg.transparent); err != nil {
+				m.err = err
+			}
+			if err := session.SetPopupBorderless(msg.borderless); err != nil {
 				m.err = err
 			}
 		}
@@ -583,7 +588,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.overlay = newColumnEditor(m.styles, m.columns, m.showPeer, m.usableWidth(), session.PopupWidth(), m.editorPreview).
 			withTheme(m.cfg.Theme, m.cfg.Icons, func(t ThemeConfig, g glyphSet) Styles { _, s := restyle(t, g); return s }).
 			withHosts(session.DiscoverHosts(), m.cfg.Hosts, m.watcher).
-			withTransparent(m.cfg.Transparent)
+			withPopupLook(m.cfg.Transparent, m.cfg.Borderless)
 		return m, m.overlay.Init()
 
 	}

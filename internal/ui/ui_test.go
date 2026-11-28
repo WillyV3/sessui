@@ -347,10 +347,43 @@ func TestEditorFillRowTogglesResetsAndApplies(t *testing.T) {
 		t.Error("ctrl+r left it transparent")
 	}
 
-	e = testEditor(112).withTransparent(true)
+	e = testEditor(112).withPopupLook(true, true)
 	press(e, keyOf(tea.KeyEsc))
-	if _, apply := e.result(); apply == nil || !apply().(editorAppliedMsg).transparent {
-		t.Error("esc did not carry transparent out")
+	_, apply := e.result()
+	if apply == nil {
+		t.Fatal("esc applied nothing")
+	}
+	if msg := apply().(editorAppliedMsg); !msg.transparent || !msg.borderless {
+		t.Errorf("esc carried out transparent %v, borderless %v", msg.transparent, msg.borderless)
+	}
+}
+
+// The border row starts on (tmux's own border), ←→ flips it, ctrl+r puts it
+// back. Its hint, the longest of the popup rows, still fits the narrowest
+// editor the default popup gives: 112 less tmux's border.
+func TestEditorBorderRowTogglesAndResets(t *testing.T) {
+	e := testEditor(110)
+	border := func() string { return ansi.Strip(e.renderBorderRow(110)) }
+	if e.borderless || !strings.Contains(border(), "on") {
+		t.Fatalf("a new editor has no border: %q", border())
+	}
+	e.row = rowBorder
+	press(e, keyOf(tea.KeyRight))
+	if !e.borderless || !strings.Contains(border(), "off") {
+		t.Fatalf("→ did not turn the border off: %q", border())
+	}
+	e.transparent = true // the widest value on the fill row
+	for name, row := range map[string]string{"border": border(), "fill": ansi.Strip(e.renderFillRow(110)), "width": ansi.Strip(e.renderWidthRow(110))} {
+		if w := lipgloss.Width(row); w > 110 {
+			t.Errorf("the %s row is %d wide in a 110 editor: %q", name, w, row)
+		}
+		if !strings.Contains(row, nextOpenHint) {
+			t.Errorf("the %s row does not say when it applies: %q", name, row)
+		}
+	}
+	press(e, keyOf(tea.KeyCtrlR))
+	if e.borderless {
+		t.Error("ctrl+r left the border off")
 	}
 }
 
@@ -375,22 +408,22 @@ func TestTransparentPersistsAndOldConfigsAreUntouched(t *testing.T) {
 	if err := SaveConfig(old); err != nil {
 		t.Fatal(err)
 	}
-	if data, _ := os.ReadFile(path); strings.Contains(string(data), "transparent") {
-		t.Errorf("save added the key to an old config:\n%s", data)
+	if data, _ := os.ReadFile(path); strings.Contains(string(data), "transparent") || strings.Contains(string(data), "borderless") {
+		t.Errorf("save added a key to an old config:\n%s", data)
 	}
 
 	m := New()
-	m, _ = send(m, editorAppliedMsg{columns: m.columns, popupWidth: popupWidthDefault, transparent: true, theme: m.cfg.Theme, icons: m.cfg.Icons, hosts: m.cfg.Hosts})
-	if !m.cfg.Transparent {
-		t.Fatal("apply did not set it")
+	m, _ = send(m, editorAppliedMsg{columns: m.columns, popupWidth: popupWidthDefault, transparent: true, borderless: true, theme: m.cfg.Theme, icons: m.cfg.Icons, hosts: m.cfg.Hosts})
+	if !m.cfg.Transparent || !m.cfg.Borderless {
+		t.Fatal("apply did not set them")
 	}
 	restarted := New()
-	if !restarted.cfg.Transparent || restarted.cfg.Icons != glyphsASCII || !slices.Equal(restarted.cfg.Hosts, []string{"box"}) {
+	if !restarted.cfg.Transparent || !restarted.cfg.Borderless || restarted.cfg.Icons != glyphsASCII || !slices.Equal(restarted.cfg.Hosts, []string{"box"}) {
 		t.Fatalf("after restart: %+v", restarted.cfg)
 	}
 	restarted, _ = send(restarted, keyOf(tea.KeyCtrlE))
-	if e, ok := restarted.overlay.(*columnEditor); !ok || !e.transparent {
-		t.Error("the editor did not reopen on transparent")
+	if e, ok := restarted.overlay.(*columnEditor); !ok || !e.transparent || !e.borderless {
+		t.Error("the editor did not reopen on transparent and borderless")
 	}
 }
 
@@ -402,19 +435,23 @@ func TestFailedSaveLeavesTheTmuxSettingAlone(t *testing.T) {
 		t.Skipf("no tmux server: %v", err)
 	}
 	t.Cleanup(func() { exec.Command("tmux", "kill-server").Run() })
-	option := func() string {
-		out, _ := exec.Command("tmux", "show-option", "-gqv", "@sessui-transparent").Output()
-		return strings.TrimSpace(string(out))
+	options := func() string {
+		var got []string
+		for _, name := range []string{"@sessui-transparent", "@sessui-borderless"} {
+			out, _ := exec.Command("tmux", "show-option", "-gqv", name).Output()
+			got = append(got, strings.TrimSpace(string(out)))
+		}
+		return strings.Join(got, " ")
 	}
 
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	m := New()
 	apply := func(on bool) {
-		m, _ = send(m, editorAppliedMsg{columns: m.columns, popupWidth: popupWidthDefault, transparent: on, theme: m.cfg.Theme, icons: m.cfg.Icons, hosts: m.cfg.Hosts})
+		m, _ = send(m, editorAppliedMsg{columns: m.columns, popupWidth: popupWidthDefault, transparent: on, borderless: on, theme: m.cfg.Theme, icons: m.cfg.Icons, hosts: m.cfg.Hosts})
 	}
 	apply(true)
-	if got := option(); got != "1" {
-		t.Fatalf("a saved apply set the option to %q", got)
+	if got := options(); got != "1 1" {
+		t.Fatalf("a saved apply set the options to %q", got)
 	}
 
 	// A file where the config directory should be: the save fails.
@@ -427,10 +464,10 @@ func TestFailedSaveLeavesTheTmuxSettingAlone(t *testing.T) {
 	if m.err == nil {
 		t.Fatal("the save did not fail")
 	}
-	if got := option(); got != "1" {
-		t.Errorf("a failed save changed the option to %q", got)
+	if got := options(); got != "1 1" {
+		t.Errorf("a failed save changed the options to %q", got)
 	}
-	if !m.cfg.Transparent {
+	if !m.cfg.Transparent || !m.cfg.Borderless {
 		t.Error("a failed save left the unsaved choice for ctrl+e to reopen on")
 	}
 }
