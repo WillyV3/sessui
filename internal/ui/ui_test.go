@@ -699,3 +699,39 @@ func TestAutoIsTheTerminalPaletteWithoutOmarchy(t *testing.T) {
 		t.Error("terminal is not a choice on the theme row")
 	}
 }
+
+// The frame carries its own background, so a palette change shows on the next
+// frame: tmux fills the popup only when it opens. Every line starts on the
+// ground and returns to it after each reset. A palette that leaves its
+// background to the terminal, and a popup opened transparent, paint nothing.
+func TestTheFramePaintsItsOwnGround(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Cleanup(func() { restyle(ThemeConfig{Palette: paletteDark}, glyphsASCII) })
+
+	restyle(ThemeConfig{Palette: paletteLight}, glyphsASCII)
+	light := "\x1b[48;2;239;241;245m\x1b[38;2;76;79;105m"
+	if ground != light {
+		t.Fatalf("the light palette's ground is %q", ground)
+	}
+	got := paintGround("a\x1b[0mb\nc")
+	if want := light + "a\x1b[0m" + light + "b\x1b[0m\n" + light + "c\x1b[0m"; got != want {
+		t.Errorf("painted frame:\n got  %q\n want %q", got, want)
+	}
+
+	m, _ := send(New(), tea.WindowSizeMsg{Width: 112, Height: 26})
+	restyle(ThemeConfig{Palette: paletteLight}, glyphsASCII) // as the editor's preview does
+	for i, line := range strings.Split(m.View(), "\n") {
+		if !strings.HasPrefix(line, light) {
+			t.Fatalf("line %d of the view is not on the ground: %q", i, line)
+		}
+	}
+	m.transparentAtOpen = true
+	if strings.Contains(m.View(), light) {
+		t.Error("a popup opened transparent painted a background")
+	}
+
+	restyle(ThemeConfig{Palette: paletteTerminal}, glyphsASCII)
+	if ground != "" || paintGround("a") != "a" {
+		t.Errorf("the terminal palette painted a ground: %q", ground)
+	}
+}

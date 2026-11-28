@@ -237,9 +237,13 @@ func (p Palette) chip(bg lipgloss.Color) lipgloss.Style {
 
 // bgSGR builds a background escape from a "#rrggbb" colour or a terminal
 // colour number, or "".
-func bgSGR(c lipgloss.Color) string {
+func bgSGR(c lipgloss.Color) string { return colourSGR(48, c) }
+
+// colourSGR is the escape that sets a colour on one layer: 38 is the
+// foreground, 48 the background.
+func colourSGR(layer int, c lipgloss.Color) string {
 	if n, err := strconv.Atoi(string(c)); err == nil && n >= 0 && n <= 255 {
-		return fmt.Sprintf("\x1b[48;5;%dm", n)
+		return fmt.Sprintf("\x1b[%d;5;%dm", layer, n)
 	}
 	hex := strings.TrimPrefix(string(c), "#")
 	if len(hex) != 6 {
@@ -249,7 +253,36 @@ func bgSGR(c lipgloss.Color) string {
 	if err != nil {
 		return ""
 	}
-	return fmt.Sprintf("\x1b[48;2;%d;%d;%dm", v>>16&0xff, v>>8&0xff, v&0xff)
+	return fmt.Sprintf("\x1b[%d;2;%d;%d;%dm", layer, v>>16&0xff, v>>8&0xff, v&0xff)
+}
+
+// ground is the escape that paints the current palette's background and
+// foreground, or "" for a palette that leaves them to the terminal. It is
+// process-wide like the icon colours, and restyle sets it.
+var ground string
+
+func groundSGR(p Palette) string {
+	bg := bgSGR(p.Background)
+	if bg == "" {
+		return ""
+	}
+	return bg + colourSGR(38, p.Foreground)
+}
+
+// paintGround lays a whole rendered frame on the palette's background. tmux
+// fills the popup once, when it opens, and a program inside cannot restyle
+// it (it ignores OSC 11 there), so the frame carries its own ground and a
+// theme change shows on the next frame. Same trick as selectRow: every cell
+// closes with a full reset, so the ground is put back after each one.
+func paintGround(frame string) string {
+	if ground == "" {
+		return frame
+	}
+	lines := strings.Split(frame, "\n")
+	for i, line := range lines {
+		lines[i] = ground + strings.ReplaceAll(line, "\x1b[0m", "\x1b[0m"+ground) + "\x1b[0m"
+	}
+	return strings.Join(lines, "\n")
 }
 
 // selectRow paints the selection background across an already multi-coloured

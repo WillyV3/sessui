@@ -135,9 +135,10 @@ change that, and both show the next time you open sessui:
   style, so the popup is one flush block. A drawn line sits in the middle of
   its cell, so a fill could only stop short of it or run past it.
 
-Both need tmux 3.3+ (`display-popup -b`, `-s`, `-S`). Before that, the popup is
-bound exactly as before. A binding of your own doesn't get either, so these
-two rows only work with the TPM popup.
+sessui paints its own background on every frame, so a change of palette or of
+Omarchy theme shows at once, and `fill` works with a binding of your own too.
+The border is tmux's to draw: it follows at the next open, `border off` needs
+the TPM popup, and both need tmux 3.3+ (`display-popup -b`, `-s`, `-S`).
 
 `config.json` is read each time the popup opens, so a change made by hand (or
 by a dotfiles sync) shows at the next open too.

@@ -71,6 +71,7 @@ func restyle(t ThemeConfig, g glyphSet) (Palette, Styles) {
 	useGlyphs(g)
 	p := loadPalette(t.Palette)
 	applyTheme(p)
+	ground = groundSGR(p)
 	return p, newStyles(p, t.Roles)
 }
 
@@ -168,6 +169,8 @@ type Model struct {
 	fullLoaded bool
 	// themeStamp is the Omarchy theme the current Styles were built from.
 	themeStamp string
+	// transparentAtOpen is the fill this popup was opened with. See grounded.
+	transparentAtOpen bool
 }
 
 // whoAmI is "user@host", degrading to whichever half is available.
@@ -216,8 +219,8 @@ func New() Model {
 		list: l, spinner: sp, delegate: delegate, home: home, styles: styles,
 		huhTheme: newHuhTheme(palette), help: newHelp(palette),
 		cfg: cfg, columns: cfg.Columns, configErr: cfgErr, who: whoAmI(),
-		themeStamp: ThemeStamp(),
-		watcher:    &session.Watcher{},
+		themeStamp: ThemeStamp(), transparentAtOpen: cfg.Transparent,
+		watcher: &session.Watcher{},
 	}
 	m.relayout()
 	return m
@@ -673,14 +676,24 @@ func (m Model) View() string {
 	// The settings editor replaces the list body: its preview IS the table.
 	// Every other overlay is a single footer line and leaves the list in place.
 	if editor, ok := m.overlay.(*columnEditor); ok {
-		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, appStyle.Render(editor.View()))
+		return m.grounded(lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, appStyle.Render(editor.View())))
 	}
 
 	lm := m.list
 	lm.SetSize(m.listSize(1)) // brand + 2 blanks + header (in listSize) + 1 footer line
 
 	body := m.brandLine() + "\n\n\n" + m.headerLine() + "\n" + lm.View() + "\n" + m.footerLine()
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, appStyle.Render(body))
+	return m.grounded(lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, appStyle.Render(body)))
+}
+
+// grounded paints the frame's background unless the popup was opened
+// transparent. The fill row is not live: tmux drew this popup's fill when it
+// opened, and painting over it is the only half sessui could do.
+func (m Model) grounded(frame string) string {
+	if m.transparentAtOpen {
+		return frame
+	}
+	return paintGround(frame)
 }
 
 // brandLine is the chrome row above the column headers.
